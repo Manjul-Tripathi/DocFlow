@@ -339,59 +339,38 @@ export const FavoritesDashboard: React.FC<FavoritesDashboardProps> = ({
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center justify-between gap-1 pt-3 border-t">
-                  <div className="flex items-center gap-1">
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onViewDocument?.(fav.document_id);
-                      }}
-                      className="h-8 w-8 p-0"
-                      title="View"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (fav.document) {
-                          onDownloadDocument?.(fav.document.id);
-                        }
-                      }}
-                      className="h-8 w-8 p-0"
-                      title="Download"
-                    >
-                      <Download className="w-4 h-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenNotes(fav.document_id);
-                      }}
-                      className="h-8 w-8 p-0"
-                      title="Notes"
-                    >
-                      <StickyNote className="w-4 h-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeFavorite(fav.document_id);
-                      }}
-                      className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 w-8 p-0"
-                      title="Remove from favorites"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
+                <div className="flex items-center gap-1 pt-3 border-t">
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => onViewDocument?.(fav.document_id)}
+                  >
+                    <Eye className="w-3 h-3 mr-1" />
+                    View
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => onDownloadDocument?.(fav.document_id)}
+                  >
+                    <Download className="w-3 h-3 mr-1" />
+                    Download
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => handleOpenNotes(fav.document_id)}
+                  >
+                    <StickyNote className="w-3 h-3" />
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => removeFavorite(fav.document_id)}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -455,49 +434,20 @@ export const FavoritesDashboard: React.FC<FavoritesDashboardProps> = ({
 
                   {/* Actions */}
                   <div className="flex items-center gap-1">
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onViewDocument?.(fav.document_id);
-                      }}
-                      className="h-8 w-8 p-0"
-                    >
+                    <Button variant="ghost" size="sm" onClick={() => onViewDocument?.(fav.document_id)}>
                       <Eye className="w-4 h-4" />
                     </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (fav.document) {
-                          onDownloadDocument?.(fav.document.id);
-                        }
-                      }}
-                      className="h-8 w-8 p-0"
-                    >
+                    <Button variant="ghost" size="sm" onClick={() => onDownloadDocument?.(fav.document_id)}>
                       <Download className="w-4 h-4" />
                     </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenNotes(fav.document_id);
-                      }}
-                      className="h-8 w-8 p-0"
-                    >
+                    <Button variant="ghost" size="sm" onClick={() => handleOpenNotes(fav.document_id)}>
                       <StickyNote className="w-4 h-4" />
                     </Button>
                     <Button 
                       variant="ghost" 
                       size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeFavorite(fav.document_id);
-                      }}
-                      className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 w-8 p-0"
+                      onClick={() => removeFavorite(fav.document_id)}
+                      className="text-destructive hover:text-destructive"
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>

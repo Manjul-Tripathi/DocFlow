@@ -72,7 +72,13 @@ export function SummaryDashboard({ documents = [] }: SummaryDashboardProps) {
     setShowSummaryPanel(true);
   }, []);
 
-
+  const getFileTypeColor = (fileType: string) => {
+    if (fileType.includes('pdf')) return 'text-red-500 bg-red-500/10';
+    if (fileType.includes('word') || fileType.includes('doc')) return 'text-blue-500 bg-blue-500/10';
+    if (fileType.includes('sheet') || fileType.includes('excel')) return 'text-green-500 bg-green-500/10';
+    if (fileType.includes('image')) return 'text-purple-500 bg-purple-500/10';
+    return 'text-muted-foreground bg-muted';
+  };
 
   return (
     <div className="space-y-6">
@@ -190,8 +196,8 @@ export function SummaryDashboard({ documents = [] }: SummaryDashboardProps) {
                           : 'opacity-50 cursor-not-allowed bg-muted/30'
                       )}
                     >
-                      <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/30">
-                        <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                      <div className={cn('p-2 rounded-lg', getFileTypeColor(doc.file_type))}>
+                        <FileText className="h-5 w-5" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">{doc.file_name}</p>
@@ -234,7 +240,6 @@ export function SummaryDashboard({ documents = [] }: SummaryDashboardProps) {
           {selectedDocument && (
             <DocumentSummaryPanel
               documentName={selectedDocument.file_name}
-              documentId={selectedDocument.id}
               documentText={selectedDocument.extracted_text || ''}
               onClose={() => setShowSummaryPanel(false)}
             />

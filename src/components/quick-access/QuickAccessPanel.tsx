@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -17,12 +17,9 @@ import {
   ChevronRight,
   Brain,
   Star,
-  RefreshCw,
 } from 'lucide-react';
 import { useQuickAccess } from '@/hooks/useQuickAccess';
 import { formatDistanceToNow } from 'date-fns';
-import { calculateAIScoresSync } from '@/services/quickAccessAI';
-import { useToast } from '@/hooks/use-toast';
 
 interface Document {
   id: string;
@@ -51,42 +48,7 @@ export const QuickAccessPanel: React.FC<QuickAccessPanelProps> = ({
     unpinDocument,
     isPinned,
     getAccessCount,
-    refetch,
   } = useQuickAccess();
-  
-  const { toast } = useToast();
-  const [calculatingScores, setCalculatingScores] = useState(false);
-  const [showAllAI, setShowAllAI] = useState(false);
-  const [showAllFrequent, setShowAllFrequent] = useState(false);
-
-  const handleCalculateScores = async () => {
-    try {
-      setCalculatingScores(true);
-      toast({
-        title: "Calculating AI scores...",
-        description: "This may take a few moments",
-      });
-      
-      const result = await calculateAIScoresSync(50);
-      
-      toast({
-        title: "AI scores updated!",
-        description: `Updated ${result.count} documents`,
-      });
-      
-      // Refresh the quick access data
-      refetch();
-    } catch (error) {
-      console.error('Error calculating scores:', error);
-      toast({
-        title: "Failed to calculate scores",
-        description: "Please try again later",
-        variant: "destructive",
-      });
-    } finally {
-      setCalculatingScores(false);
-    }
-  };
 
   // Merge quick access data with documents
   const enrichedDocuments = useMemo(() => {
@@ -108,21 +70,27 @@ export const QuickAccessPanel: React.FC<QuickAccessPanelProps> = ({
     .filter(d => d.isPinned)
     .sort((a, b) => b.accessCount - a.accessCount);
 
-  const allAISuggestedDocs = enrichedDocuments
+  const aiSuggestedDocs = enrichedDocuments
     .filter(d => !d.isPinned && (d.aiScore > 0 || d.accessCount > 2))
     .sort((a, b) => {
       // Sort by AI score first, then by access count
       if (b.aiScore !== a.aiScore) return b.aiScore - a.aiScore;
       return b.accessCount - a.accessCount;
-    });
-  
-  const aiSuggestedDocs = showAllAI ? allAISuggestedDocs : allAISuggestedDocs.slice(0, 5);
+    })
+    .slice(0, 5);
 
-  const allFrequentDocs = enrichedDocuments
+  const frequentDocs = enrichedDocuments
     .filter(d => !d.isPinned && d.accessCount > 0)
-    .sort((a, b) => b.accessCount - a.accessCount);
-  
-  const frequentDocs = showAllFrequent ? allFrequentDocs : allFrequentDocs.slice(0, 5);
+    .sort((a, b) => b.accessCount - a.accessCount)
+    .slice(0, 5);
+
+  const getFileIcon = (type: string) => {
+    if (type.includes('pdf')) return '📄';
+    if (type.includes('image')) return '🖼️';
+    if (type.includes('word') || type.includes('doc')) return '📝';
+    if (type.includes('sheet') || type.includes('excel')) return '📊';
+    return '📁';
+  };
 
   const renderDocumentItem = (doc: typeof enrichedDocuments[0], showAIBadge = false) => (
     <div
@@ -130,9 +98,7 @@ export const QuickAccessPanel: React.FC<QuickAccessPanelProps> = ({
       className="group flex items-center gap-3 p-3 rounded-lg hover:bg-accent/50 transition-all cursor-pointer border border-transparent hover:border-border"
       onClick={() => onViewDocument?.(doc)}
     >
-      <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/30">
-        <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-      </div>
+      <div className="text-2xl">{getFileIcon(doc.file_type)}</div>
       
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
@@ -146,12 +112,11 @@ export const QuickAccessPanel: React.FC<QuickAccessPanelProps> = ({
                 <TooltipTrigger>
                   <Badge variant="secondary" className="text-xs px-1.5 py-0 flex items-center gap-1">
                     <Brain className="h-3 w-3" />
-                    {doc.aiScore.toFixed(1)}
+                    AI
                   </Badge>
                 </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  <p className="text-xs font-semibold mb-1">AI Reasoning:</p>
-                  <p className="text-xs">{doc.aiReason || 'Suggested based on frequent access patterns and recent usage'}</p>
+                <TooltipContent>
+                  <p className="text-xs">{doc.aiReason || 'AI suggested based on your usage'}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -234,33 +199,6 @@ export const QuickAccessPanel: React.FC<QuickAccessPanelProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Header with AI Score Button */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">Quick Access</h3>
-          <p className="text-sm text-muted-foreground">Priority and frequently accessed documents</p>
-        </div>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCalculateScores}
-                disabled={calculatingScores}
-                className="gap-2"
-              >
-                <RefreshCw className={`h-4 w-4 ${calculatingScores ? 'animate-spin' : ''}`} />
-                {calculatingScores ? 'Calculating...' : 'Update AI Scores'}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Recalculate AI suggestions based on your usage</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </div>
-
       {/* Pinned Documents */}
       {pinnedDocs.length > 0 && (
         <Card className="border-primary/20">
@@ -280,14 +218,14 @@ export const QuickAccessPanel: React.FC<QuickAccessPanelProps> = ({
       )}
 
       {/* AI Suggested */}
-      {allAISuggestedDocs.length > 0 && (
+      {aiSuggestedDocs.length > 0 && (
         <Card className="bg-gradient-to-br from-violet-50/50 to-purple-50/50 dark:from-violet-950/20 dark:to-purple-950/20 border-violet-200/50 dark:border-violet-800/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-violet-600" />
               AI Suggested
               <Badge variant="secondary" className="ml-auto bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-300">
-                {allAISuggestedDocs.length}
+                {aiSuggestedDocs.length}
               </Badge>
             </CardTitle>
           </CardHeader>
@@ -295,52 +233,30 @@ export const QuickAccessPanel: React.FC<QuickAccessPanelProps> = ({
             <div className="space-y-1">
               {aiSuggestedDocs.map(doc => renderDocumentItem(doc, true))}
             </div>
-            {allAISuggestedDocs.length > 5 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full mt-2 text-xs"
-                onClick={() => setShowAllAI(!showAllAI)}
-              >
-                {showAllAI ? 'Show Less' : `Show ${allAISuggestedDocs.length - 5} More`}
-                <ChevronRight className={`h-3 w-3 ml-1 transition-transform ${showAllAI ? 'rotate-90' : ''}`} />
-              </Button>
-            )}
           </CardContent>
         </Card>
       )}
 
       {/* Frequently Accessed */}
-      {allFrequentDocs.length > 0 && (
+      {frequentDocs.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-green-600" />
               Frequently Accessed
-              <Badge variant="secondary" className="ml-auto">{allFrequentDocs.length}</Badge>
+              <Badge variant="secondary" className="ml-auto">{frequentDocs.length}</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
             <div className="space-y-1">
               {frequentDocs.map(doc => renderDocumentItem(doc))}
             </div>
-            {allFrequentDocs.length > 5 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full mt-2 text-xs"
-                onClick={() => setShowAllFrequent(!showAllFrequent)}
-              >
-                {showAllFrequent ? 'Show Less' : `Show ${allFrequentDocs.length - 5} More`}
-                <ChevronRight className={`h-3 w-3 ml-1 transition-transform ${showAllFrequent ? 'rotate-90' : ''}`} />
-              </Button>
-            )}
           </CardContent>
         </Card>
       )}
 
       {/* Empty State */}
-      {pinnedDocs.length === 0 && allAISuggestedDocs.length === 0 && allFrequentDocs.length === 0 && (
+      {pinnedDocs.length === 0 && aiSuggestedDocs.length === 0 && frequentDocs.length === 0 && (
         <Card className="border-dashed">
           <CardContent className="p-8 text-center">
             <Zap className="h-12 w-12 text-muted-foreground mx-auto mb-4" />

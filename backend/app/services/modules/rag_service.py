@@ -574,57 +574,20 @@ ANSWER:"""
                 }
             
             doc = response.data[0]
-            file_name = doc.get('file_name', 'Unknown')
-            processing_status = doc.get('processing_status', 'unknown')
-            extracted_text = doc.get('extracted_text', '')
             analysis_result = doc.get('analysis_result', {})
             
-            # Check if document has been processed
-            if processing_status != 'completed':
-                return {
-                    "summary": f"⚠️ Document '{file_name}' has not been processed yet. Please process the document first before generating a summary.",
-                    "metadata": {
-                        "error": "Document not processed",
-                        "status": processing_status,
-                        "file_name": file_name
-                    }
-                }
-            
-            # Try to extract text content from multiple sources
-            context = ""
-            
-            # First, try extracted_text field
-            if extracted_text and len(extracted_text.strip()) > 0:
-                context = extracted_text
-                logger.info(f"✓ Using extracted_text field ({len(context)} chars)")
-            # Second, try to extract from analysis_result
-            elif analysis_result:
-                context = self._extract_context_from_documents([doc])
-                logger.info(f"✓ Extracted from analysis_result ({len(context)} chars)")
-            
-            # Check if we have enough content
-            if not context or len(context.strip()) < 50:
-                return {
-                    "summary": f"⚠️ Document '{file_name}' appears to be empty or text extraction failed. The document may be an image-only PDF, or the content could not be extracted. Please ensure the document contains readable text.",
-                    "metadata": {
-                        "error": "No extractable text",
-                        "file_name": file_name,
-                        "processing_status": processing_status,
-                        "extracted_text_length": len(extracted_text) if extracted_text else 0
-                    }
-                }
+            # Extract document content
+            context = self._extract_context_from_documents([doc])
             
             # Generate summary based on type
-            summary_prompts = {
-                "brief": f"Provide a brief 2-3 sentence summary of this document that captures the main idea:\n\n{context}",
-                "detailed": f"Provide a comprehensive and detailed summary of this document, including all key information, main points, and important details:\n\n{context}",
-                "executive": f"Provide an executive summary for decision makers. Focus on key insights, strategic implications, and actionable recommendations. Format it professionally:\n\n{context}",
-                "bullet": f"Extract and present the key points from this document in bullet point format. Use clear, concise bullet points:\n\n{context}",
-                "action-items": f"Identify all action items, tasks, deadlines, and responsibilities mentioned in this document. Present them in a structured format with due dates if available:\n\n{context}",
-                "key_points": f"Extract the key points from this document in bullet format:\n\n{context}"
-            }
-            
-            prompt = summary_prompts.get(summary_type, f"Summarize this document:\n\n{context}")
+            if summary_type == "brief":
+                prompt = f"Provide a brief 2-3 sentence summary of this document:\n\n{context}"
+            elif summary_type == "detailed":
+                prompt = f"Provide a detailed summary of this document, including all key information:\n\n{context}"
+            elif summary_type == "key_points":
+                prompt = f"Extract the key points from this document in bullet format:\n\n{context}"
+            else:
+                prompt = f"Summarize this document:\n\n{context}"
             
             # Generate summary
             summary_response = await self.llm_client.call_api(

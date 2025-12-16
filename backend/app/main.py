@@ -16,7 +16,6 @@ if env_file_path.exists():
     load_dotenv(env_file_path)
 
 from .api.routes import analyze_router
-from .api.quick_access import router as quick_access_router
 from .core.config import settings
 
 # Configure logging with both console and file handlers
@@ -138,7 +137,6 @@ app.add_middleware(
 
 # Include routers
 app.include_router(analyze_router, prefix="/api/v1")
-app.include_router(quick_access_router, prefix="/api/v1")
 
 @app.on_event("shutdown")
 async def shutdown_event():

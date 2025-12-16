@@ -438,7 +438,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
           'template_guided_extraction' as any,
           documentData.filename,
           enhancedTemplates,
-          true, // Enable auto-save with embeddings
+          false, // Don't save to database automatically
           maxWorkers,
           maxThreads,
           yoloSignatureEnabled,
@@ -458,7 +458,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
           'without_template_extraction' as any,
           documentData.filename,
           undefined,
-          true, // Enable auto-save with embeddings
+          false, // Don't save to database automatically
           maxWorkers,
           maxThreads,
           yoloSignatureEnabled,
