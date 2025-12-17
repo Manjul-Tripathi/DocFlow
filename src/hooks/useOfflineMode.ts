@@ -112,18 +112,39 @@ export const useOfflineMode = () => {
     storage_url?: string | null;
   }) => {
     try {
+      console.log('📥 Making document available offline:', {
+        id: document.id,
+        file_name: document.file_name,
+        storage_url: document.storage_url
+      });
+
       let blob: Blob | undefined;
 
       // Download the file blob if there's a storage URL
       if (document.storage_url) {
         try {
+          console.log('⬇️ Downloading blob from:', document.storage_url);
           const response = await fetch(document.storage_url);
+          console.log('📡 Fetch response:', {
+            ok: response.ok,
+            status: response.status,
+            contentType: response.headers.get('content-type')
+          });
+          
           if (response.ok) {
             blob = await response.blob();
+            console.log('✅ Blob downloaded:', {
+              size: blob.size,
+              type: blob.type
+            });
+          } else {
+            console.warn('❌ Failed to download blob:', response.status, response.statusText);
           }
         } catch (error) {
-          console.warn('Could not download file for offline access:', error);
+          console.error('❌ Error downloading file for offline access:', error);
         }
+      } else {
+        console.warn('⚠️ No storage_url provided for document');
       }
 
       await saveDocumentOffline(document, blob);

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { getAllOfflineDocuments } from '@/services/offlineStorage';
 import type { Document, DocumentStats, SortOrder } from '../types';
 
 const SUPABASE_URL = 'https://nvdkgfptnqardtxlqoym.supabase.co';
@@ -16,12 +17,80 @@ export function useDocuments(options: UseDocumentsOptions = {}) {
   
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isOfflineMode, setIsOfflineMode] = useState(!navigator.onLine);
   const { toast } = useToast();
 
-  const fetchDocuments = useCallback(async () => {
+  // Listen for online/offline events
+  useEffect(() => {
+    const handleOnline = () => setIsOfflineMode(false);
+    const handleOffline = () => setIsOfflineMode(true);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Fetch offline documents from IndexedDB
+  const fetchOfflineDocuments = useCallback(async () => {
     try {
-      const { data: user } = await supabase.auth.getUser();
-      if (!user.user) return;
+      console.log('📴 Fetching offline documents from IndexedDB...');
+      const offlineDocs = await getAllOfflineDocuments();
+      
+      const processedDocuments: Document[] = offlineDocs.map((doc) => ({
+        id: doc.id,
+        file_name: doc.file_name,
+        file_type: doc.file_type,
+        file_size: doc.file_size,
+        created_at: doc.created_at,
+        updated_at: doc.updated_at,
+        extracted_text: doc.extracted_text || '',
+        processing_status: doc.processing_status || 'completed',
+        metadata: { ...doc.metadata, is_offline: true },
+        storage_url: doc.storage_url,
+        storage_path: undefined,
+        insights: undefined,
+        tags: [],
+        folders: []
+      }));
+      
+      console.log('📴 Loaded', processedDocuments.length, 'offline documents');
+      setDocuments(processedDocuments);
+      
+      if (processedDocuments.length > 0) {
+        toast({
+          title: "Offline Mode",
+          description: `Showing ${processedDocuments.length} cached documents`,
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching offline documents:', error);
+      setDocuments([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  const fetchDocuments = useCallback(async () => {
+    // If offline, fetch from IndexedDB instead
+    if (!navigator.onLine) {
+      console.log('📴 Offline detected, loading from IndexedDB...');
+      await fetchOfflineDocuments();
+      return;
+    }
+    
+    try {
+      const { data: user, error: userError } = await supabase.auth.getUser();
+      
+      // If auth fails (network error), try offline mode
+      if (userError || !user.user) {
+        console.log('❌ Auth failed, falling back to offline mode:', userError?.message);
+        await fetchOfflineDocuments();
+        return;
+      }
 
       console.log('📊 useDocuments: Fetching documents for folder:', selectedFolder);
 
@@ -142,7 +211,31 @@ export function useDocuments(options: UseDocumentsOptions = {}) {
         });
       }
 
-      const processedDocuments: Document[] = (documentsData || []).map((doc: any) => {
+      // Generate signed URLs for documents with storage_path
+      const documentsWithUrls = await Promise.all(
+        (documentsData || []).map(async (doc: any) => {
+          let storageUrl = doc.original_url || undefined;
+          
+          // Generate signed URL from storage_path for offline downloads (valid for 1 hour)
+          if (!storageUrl && doc.storage_path) {
+            try {
+              const { data, error } = await supabase.storage
+                .from('documents')
+                .createSignedUrl(doc.storage_path, 3600); // 1 hour expiry
+              
+              if (!error && data?.signedUrl) {
+                storageUrl = data.signedUrl;
+              }
+            } catch (err) {
+              console.warn('Failed to generate signed URL for:', doc.storage_path);
+            }
+          }
+          
+          return { ...doc, storageUrl };
+        })
+      );
+
+      const processedDocuments: Document[] = documentsWithUrls.map((doc: any) => {
         const displayName = doc.file_name || doc.original_name || doc.name || doc.file_path?.split('/').pop() || 'Unknown';
         
         return {
@@ -155,7 +248,7 @@ export function useDocuments(options: UseDocumentsOptions = {}) {
           extracted_text: doc.extracted_text || '',
           processing_status: doc.processing_status || 'completed',
           metadata: doc.metadata || {},
-          storage_url: undefined,
+          storage_url: doc.storageUrl,
           storage_path: doc.storage_path,
           insights: undefined,
           tags: [],
@@ -165,22 +258,31 @@ export function useDocuments(options: UseDocumentsOptions = {}) {
 
       console.log('📊 Processed documents with folders:', processedDocuments);
       setDocuments(processedDocuments);
-    } catch (error) {
-      console.error('Error:', error);
-      toast({
-        title: "Error",
-        description: "Failed to load documents",
-        variant: "destructive",
-      });
-    } finally {
       setLoading(false);
+    } catch (error) {
+      console.error('Error fetching from server:', error);
+      
+      // If fetch fails (network error), try offline mode
+      console.log('📴 Server fetch failed, trying offline fallback...');
+      try {
+        await fetchOfflineDocuments();
+      } catch (offlineError) {
+        console.error('Offline fallback also failed:', offlineError);
+        toast({
+          title: "Error",
+          description: "Failed to load documents. Check your connection.",
+          variant: "destructive",
+        });
+        setDocuments([]);
+        setLoading(false);
+      }
     }
-  }, [toast, selectedFolder]);
+  }, [toast, selectedFolder, fetchOfflineDocuments]);
 
   useEffect(() => {
-    console.log('🔄 useDocuments: useEffect triggered, selectedFolder:', selectedFolder);
+    console.log('🔄 useDocuments: useEffect triggered, selectedFolder:', selectedFolder, 'isOffline:', !navigator.onLine);
     fetchDocuments();
-  }, [fetchDocuments, selectedFolder]);
+  }, [fetchDocuments, selectedFolder, isOfflineMode]);
 
   const stats: DocumentStats = useMemo(() => {
     const totalDocs = documents.length;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import { toast } from 'sonner';
+import { scannerService } from '@/services/scannerService';
 import {
   Scan,
   Settings,
@@ -23,7 +24,8 @@ import {
   Zap,
   HardDrive,
   Network,
-  AlertTriangle
+  AlertTriangle,
+  Trash2
 } from 'lucide-react';
 
 export interface ScannerDevice {
@@ -84,80 +86,51 @@ const defaultSettings: ScanSettings = {
   multiPagePdf: true
 };
 
-// Simulated scanner discovery
-const mockScanners: ScannerDevice[] = [
-  {
-    id: 'scanner-1',
-    name: 'HP ScanJet Pro 3000',
-    manufacturer: 'HP',
-    model: 'ScanJet Pro 3000 s4',
-    connectionType: 'usb',
-    status: 'online',
-    capabilities: {
-      maxResolution: 1200,
-      colorModes: ['color', 'grayscale', 'blackwhite'],
-      paperSizes: ['A4', 'A5', 'Letter', 'Legal', 'Custom'],
-      duplex: true,
-      adf: true,
-      adfCapacity: 50
-    }
-  },
-  {
-    id: 'scanner-2',
-    name: 'Canon imageFORMULA DR-C225',
-    manufacturer: 'Canon',
-    model: 'imageFORMULA DR-C225 II',
-    connectionType: 'network',
-    status: 'online',
-    ipAddress: '192.168.1.105',
-    capabilities: {
-      maxResolution: 600,
-      colorModes: ['color', 'grayscale', 'blackwhite'],
-      paperSizes: ['A4', 'A5', 'A6', 'Letter', 'Legal', 'Business Card'],
-      duplex: true,
-      adf: true,
-      adfCapacity: 30
-    }
-  },
-  {
-    id: 'scanner-3',
-    name: 'Epson WorkForce ES-580W',
-    manufacturer: 'Epson',
-    model: 'WorkForce ES-580W',
-    connectionType: 'wireless',
-    status: 'offline',
-    capabilities: {
-      maxResolution: 600,
-      colorModes: ['color', 'grayscale', 'blackwhite'],
-      paperSizes: ['A4', 'A5', 'Letter', 'Legal'],
-      duplex: true,
-      adf: true,
-      adfCapacity: 100
-    }
-  }
-];
-
 export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps> = ({
   onScannerSelect,
   onSettingsChange,
   selectedScanner,
   currentSettings = defaultSettings
 }) => {
-  const [scanners, setScanners] = useState<ScannerDevice[]>(mockScanners);
+  const [scanners, setScanners] = useState<ScannerDevice[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [settings, setSettings] = useState<ScanSettings>(currentSettings);
   const [networkScannerIp, setNetworkScannerIp] = useState('');
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
 
+  // Auto-detect scanners on mount
+  useEffect(() => {
+    handleRefreshScanners();
+  }, []);
+
   const handleRefreshScanners = async () => {
     setIsScanning(true);
-    // Simulate scanner discovery
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setScanners(mockScanners);
-    setIsScanning(false);
-    toast.success('Scanner discovery complete', {
-      description: `Found ${mockScanners.length} scanner(s)`
-    });
+    try {
+      console.log('🔍 Detecting scanners...');
+      const detectedScanners = await scannerService.detectScanners();
+      
+      setScanners(detectedScanners);
+      
+      if (detectedScanners.length === 0) {
+        console.log('⚠️ No scanners detected');
+        toast.info('No scanners detected', {
+          description: 'Please ensure your scanner is connected and drivers are installed.',
+        });
+      } else {
+        console.log(`✅ Found ${detectedScanners.length} scanner(s)`);
+        toast.success('Scanner discovery complete', {
+          description: `Found ${detectedScanners.length} scanner(s)`,
+        });
+      }
+    } catch (error) {
+      console.error('Scanner detection failed:', error);
+      setScanners([]);
+      toast.error('Scanner detection failed', {
+        description: 'Check console for details.',
+      });
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   const handleAddNetworkScanner = async () => {
@@ -167,30 +140,52 @@ export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps>
     }
 
     setIsAddingNetwork(true);
-    // Simulate network scanner connection
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    const newScanner: ScannerDevice = {
-      id: `network-${Date.now()}`,
-      name: `Network Scanner (${networkScannerIp})`,
-      manufacturer: 'Unknown',
-      model: 'Network Scanner',
-      connectionType: 'network',
-      status: 'online',
-      ipAddress: networkScannerIp,
-      capabilities: {
-        maxResolution: 600,
-        colorModes: ['color', 'grayscale', 'blackwhite'],
-        paperSizes: ['A4', 'Letter'],
-        duplex: false,
-        adf: false
-      }
-    };
+    try {
+      const newScanner = await scannerService.addNetworkScanner(networkScannerIp);
+      setScanners(prev => [...prev, newScanner]);
+      setNetworkScannerIp('');
+      
+      // Auto-select the newly added scanner
+      onScannerSelect?.(newScanner);
+      
+      toast.success('Scanner connected successfully!', {
+        description: `${newScanner.name} is ready. Click "Start Batch Scan" to begin scanning.`
+      });
+    } catch (error: any) {
+      console.error('Failed to add network scanner:', error);
+      toast.error('Failed to add scanner', {
+        description: error.message || 'Please check the IP address and try again'
+      });
+    } finally {
+      setIsAddingNetwork(false);
+    }
+  };
 
-    setScanners(prev => [...prev, newScanner]);
-    setNetworkScannerIp('');
-    setIsAddingNetwork(false);
-    toast.success('Network scanner added successfully');
+  const handleRemoveScanner = (scannerId: string, event: React.MouseEvent) => {
+    event.stopPropagation(); // Prevent scanner selection when clicking delete
+    
+    const scanner = scanners.find(s => s.id === scannerId);
+    if (!scanner) return;
+
+    // Remove from state
+    setScanners(prev => prev.filter(s => s.id !== scannerId));
+    
+    // Remove from localStorage if it's a network scanner
+    if (scanner.connectionType === 'network') {
+      const savedScanners = scanners.filter(s => 
+        s.connectionType === 'network' && s.id !== scannerId
+      );
+      localStorage.setItem('network_scanners', JSON.stringify(savedScanners));
+    }
+    
+    // Deselect if this was the selected scanner
+    if (selectedScanner?.id === scannerId) {
+      onScannerSelect?.(null as any);
+    }
+    
+    toast.success('Scanner removed', {
+      description: `${scanner.name} has been disconnected`
+    });
   };
 
   const handleSettingChange = <K extends keyof ScanSettings>(key: K, value: ScanSettings[K]) => {
@@ -239,17 +234,74 @@ export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps>
         </TabsList>
 
         <TabsContent value="scanners" className="space-y-4 mt-4">
-          {/* Scanner Discovery */}
+          {/* Add Network Scanner - Now Primary */}
+          <Card className="border-primary border-2">
+            <CardHeader className="pb-3 bg-primary/5">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Wifi className="h-5 w-5 text-primary" />
+                Connect Wi-Fi Scanner
+              </CardTitle>
+              <CardDescription>
+                Enter your scanner's IP address to connect
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-4">
+              <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 text-sm">
+                <p className="font-medium text-amber-900 dark:text-amber-100 mb-2">⚠️ Browser Limitation</p>
+                <p className="text-amber-700 dark:text-amber-300 text-xs">
+                  Web browsers cannot auto-discover network scanners due to security restrictions. 
+                  Please enter your scanner's IP address manually.
+                </p>
+              </div>
+
+              <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 text-sm">
+                <p className="font-medium text-blue-900 dark:text-blue-100 mb-1">📍 How to find your scanner's IP:</p>
+                <ul className="text-blue-700 dark:text-blue-300 space-y-1 ml-4 list-disc text-xs">
+                  <li><b>Scanner Display:</b> Menu → Network Settings → TCP/IP</li>
+                  <li><b>Print Config Page:</b> Hold Info/i button on scanner</li>
+                  <li><b>Router Admin:</b> Check connected devices list</li>
+                  <li><b>Scanner App:</b> HP Smart, Canon Print, Epson Smart Panel</li>
+                </ul>
+              </div>
+              
+              <div className="flex gap-3">
+                <Input
+                  placeholder="Scanner IP (e.g., 192.168.1.100)"
+                  value={networkScannerIp}
+                  onChange={(e) => setNetworkScannerIp(e.target.value)}
+                  className="flex-1 text-lg font-mono"
+                />
+                <Button 
+                  onClick={handleAddNetworkScanner}
+                  disabled={isAddingNetwork || !networkScannerIp.trim()}
+                  size="lg"
+                >
+                  {isAddingNetwork ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Wifi className="h-4 w-4 mr-2" />
+                  )}
+                  Connect
+                </Button>
+              </div>
+              
+              <p className="text-xs text-muted-foreground">
+                Works with HP, Canon, Epson, Brother, and other eSCL/AirPrint compatible scanners
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Scanner Discovery - Secondary */}
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="text-base flex items-center gap-2">
                     <Scan className="h-5 w-5 text-primary" />
-                    Available Scanners
+                    Connected Scanners
                   </CardTitle>
                   <CardDescription>
-                    Discover and connect to local or network scanners
+                    Scanners you've added will appear here
                   </CardDescription>
                 </div>
                 <Button
@@ -259,7 +311,7 @@ export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps>
                   disabled={isScanning}
                 >
                   <RefreshCw className={`h-4 w-4 mr-2 ${isScanning ? 'animate-spin' : ''}`} />
-                  {isScanning ? 'Scanning...' : 'Refresh'}
+                  Refresh
                 </Button>
               </div>
             </CardHeader>
@@ -275,11 +327,11 @@ export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps>
                   onClick={() => scanner.status === 'online' && onScannerSelect?.(scanner)}
                 >
                   <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-start gap-3 flex-1">
                       <div className="p-2 rounded-lg bg-muted">
                         <Monitor className="h-5 w-5 text-muted-foreground" />
                       </div>
-                      <div>
+                      <div className="flex-1">
                         <h4 className="font-medium flex items-center gap-2">
                           {scanner.name}
                           {selectedScanner?.id === scanner.id && (
@@ -311,51 +363,70 @@ export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps>
                       <span className="text-xs text-muted-foreground">
                         Max {scanner.capabilities.maxResolution} DPI
                       </span>
+                      {scanner.connectionType === 'network' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                          onClick={(e) => handleRemoveScanner(scanner.id, e)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
               ))}
 
-              {scanners.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Scan className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                  <p>No scanners found</p>
-                  <p className="text-sm">Click refresh to discover scanners</p>
+              {selectedScanner && scanners.length > 0 && (
+                <div className="bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-medium text-green-900 dark:text-green-100 text-sm">
+                        Scanner Ready!
+                      </p>
+                      <p className="text-green-700 dark:text-green-300 text-xs mt-1">
+                        <strong>{selectedScanner.name}</strong> is selected. Configure scan settings in the tabs above, then click <strong>"Start Batch Scan"</strong> button (on the left panel) to begin scanning documents.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
 
-          {/* Add Network Scanner */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Network className="h-5 w-5 text-primary" />
-                Add Network Scanner
-              </CardTitle>
-              <CardDescription>
-                Manually add a scanner by IP address
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-3">
-                <Input
-                  placeholder="Enter scanner IP address (e.g., 192.168.1.100)"
-                  value={networkScannerIp}
-                  onChange={(e) => setNetworkScannerIp(e.target.value)}
-                  className="flex-1"
-                />
-                <Button 
-                  onClick={handleAddNetworkScanner}
-                  disabled={isAddingNetwork || !networkScannerIp.trim()}
-                >
-                  {isAddingNetwork ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    'Add Scanner'
-                  )}
-                </Button>
-              </div>
+              {isScanning && (
+                <div className="text-center py-12">
+                  <Loader2 className="h-12 w-12 mx-auto mb-3 animate-spin text-primary" />
+                  <p className="font-medium mb-2">Scanning your network...</p>
+                  <p className="text-sm text-muted-foreground">
+                    Checking all devices on your local network for scanners
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    This may take 10-15 seconds
+                  </p>
+                </div>
+              )}
+
+              {scanners.length === 0 && !isScanning && (
+                <div className="text-center py-8 px-6">
+                  <div className="rounded-full bg-muted p-3 w-16 h-16 mx-auto mb-3 flex items-center justify-center">
+                    <Printer className="h-8 w-8 text-muted-foreground" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    No scanners connected yet
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Use the form above to connect your Wi-Fi scanner
+                  </p>
+                </div>
+              )}
+
+              {isScanning && scanners.length === 0 && (
+                <div className="text-center py-12">
+                  <Loader2 className="h-12 w-12 mx-auto mb-3 animate-spin text-primary" />
+                  <p className="text-sm text-muted-foreground">Checking for scanners...</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

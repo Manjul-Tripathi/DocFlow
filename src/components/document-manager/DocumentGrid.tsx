@@ -22,10 +22,13 @@ import {
   Folder,
   Sparkles,
   Trash2,
-  FolderPlus
+  FolderPlus,
+  CloudOff,
+  CloudDownload
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
+import { useOfflineMode } from '@/hooks/useOfflineMode';
 import { MoveToFolderDialog } from './MoveToFolderDialog';
 
 interface Document {
@@ -80,8 +83,41 @@ export const DocumentGrid: React.FC<DocumentGridProps> = ({
   onRefresh
 }) => {
   const { toast } = useToast();
+  const { makeDocumentAvailableOffline, isDocumentOffline, removeDocumentFromOffline } = useOfflineMode();
   const [moveDialogOpen, setMoveDialogOpen] = React.useState(false);
   const [selectedDocument, setSelectedDocument] = React.useState<Document | null>(null);
+  const [offlineDocIds, setOfflineDocIds] = React.useState<Set<string>>(new Set());
+
+  // Check which documents are available offline
+  React.useEffect(() => {
+    const checkOfflineStatus = async () => {
+      const offlineIds = new Set<string>();
+      for (const doc of documents) {
+        const isOffline = await isDocumentOffline(doc.id);
+        if (isOffline) offlineIds.add(doc.id);
+      }
+      setOfflineDocIds(offlineIds);
+    };
+    checkOfflineStatus();
+  }, [documents, isDocumentOffline]);
+
+  const handleMakeOffline = async (document: Document) => {
+    const success = await makeDocumentAvailableOffline(document);
+    if (success) {
+      setOfflineDocIds(prev => new Set([...prev, document.id]));
+    }
+  };
+
+  const handleRemoveOffline = async (document: Document) => {
+    const success = await removeDocumentFromOffline(document.id);
+    if (success) {
+      setOfflineDocIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(document.id);
+        return newSet;
+      });
+    }
+  };
 
   const handleView = (document: Document) => {
     // Trigger the parent click handler which opens the modal viewer
@@ -253,12 +289,23 @@ export const DocumentGrid: React.FC<DocumentGridProps> = ({
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-      {documents.map(document => (
+      {documents.map(document => {
+        const isOffline = offlineDocIds.has(document.id);
+        return (
         <Card 
           key={document.id} 
-          className="group hover:shadow-lg transition-all duration-200 cursor-pointer border hover:border-primary/20"
+          className="group hover:shadow-lg transition-all duration-200 cursor-pointer border hover:border-primary/20 relative"
           onClick={() => onDocumentClick(document)}
         >
+          {/* Offline Badge */}
+          {isOffline && (
+            <div className="absolute top-2 right-12 z-10">
+              <Badge variant="secondary" className="text-xs flex items-center gap-1 bg-green-100 text-green-700">
+                <CloudOff className="w-3 h-3" />
+                Offline
+              </Badge>
+            </div>
+          )}
           <CardContent className="p-4">
             {/* Header */}
             <div className="flex items-start justify-between mb-3">
@@ -339,6 +386,24 @@ export const DocumentGrid: React.FC<DocumentGridProps> = ({
                         <FolderPlus className="w-4 h-4 mr-2" />
                         Move to Folder
                       </DropdownMenuItem>
+                      {/* Offline options */}
+                      {isOffline ? (
+                        <DropdownMenuItem onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveOffline(document);
+                        }}>
+                          <CloudOff className="w-4 h-4 mr-2" />
+                          Remove from Offline
+                        </DropdownMenuItem>
+                      ) : (
+                        <DropdownMenuItem onClick={(e) => {
+                          e.stopPropagation();
+                          handleMakeOffline(document);
+                        }}>
+                          <CloudDownload className="w-4 h-4 mr-2" />
+                          Make Available Offline
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem 
                         onClick={(e) => {
@@ -456,7 +521,8 @@ export const DocumentGrid: React.FC<DocumentGridProps> = ({
             )}
           </CardContent>
         </Card>
-      ))}
+        );
+      })}
 
       {/* Move to Folder Dialog */}
       {selectedDocument && (

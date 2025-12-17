@@ -3,6 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
 import { 
   Search, 
   Upload, 
@@ -13,7 +14,10 @@ import {
   Scan,
   Cloud,
   CloudOff,
-  MessageSquare
+  MessageSquare,
+  HardDrive,
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
 import type { DocumentStats, ViewMode, SortOrder } from '../types';
 
@@ -32,7 +36,12 @@ interface SimplifyDriveHeaderProps {
   onUpload: () => void;
   onScan: () => void;
   onChatbot?: () => void;
+  onOfflinePanel?: () => void;
+  onSync?: () => void;
   isOnline: boolean;
+  offlineCount?: number;
+  pendingSyncCount?: number;
+  isSyncing?: boolean;
 }
 
 export function SimplifyDriveHeader({
@@ -50,10 +59,26 @@ export function SimplifyDriveHeader({
   onUpload,
   onScan,
   onChatbot,
+  onOfflinePanel,
+  onSync,
   isOnline,
+  offlineCount = 0,
+  pendingSyncCount = 0,
+  isSyncing = false,
 }: SimplifyDriveHeaderProps) {
   return (
     <div className="space-y-4 p-4 border-b bg-background">
+      {/* Offline Mode Banner */}
+      {!isOnline && (
+        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
+          <div className="flex items-center gap-2 text-sm text-yellow-600">
+            <AlertTriangle className="h-4 w-4" />
+            <span className="font-medium">Offline Mode</span>
+            <span className="text-muted-foreground">- Showing cached documents only</span>
+          </div>
+        </div>
+      )}
+      
       {/* Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
@@ -149,11 +174,46 @@ export function SimplifyDriveHeader({
         </Button>
 
         {/* Online Status */}
-        <div className="flex items-center gap-1 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2">
           {isOnline ? (
             <Cloud className="h-4 w-4 text-green-500" />
           ) : (
             <CloudOff className="h-4 w-4 text-destructive" />
+          )}
+          
+          {/* Offline Documents Button */}
+          {onOfflinePanel && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={onOfflinePanel}
+              className="gap-2"
+            >
+              <HardDrive className="h-4 w-4" />
+              Offline
+              {offlineCount > 0 && (
+                <Badge variant="secondary" className="ml-1">
+                  {offlineCount}
+                </Badge>
+              )}
+            </Button>
+          )}
+          
+          {/* Sync Button */}
+          {onSync && pendingSyncCount > 0 && isOnline && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={onSync}
+              disabled={isSyncing}
+              className="gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+              Sync
+              <Badge variant="destructive" className="ml-1">
+                {pendingSyncCount}
+              </Badge>
+            </Button>
           )}
         </div>
 

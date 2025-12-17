@@ -26,6 +26,7 @@ interface Document {
   created_at: string;
   insights?: DocumentInsight;
   tags?: DocumentTag[];
+  is_deleted?: boolean;
 }
 
 interface DocumentInsight {
@@ -46,6 +47,7 @@ interface DocumentTag {
 
 interface AIRecommendationsProps {
   documents: Document[];
+  onRefresh?: () => void;
 }
 
 interface Recommendation {
@@ -59,7 +61,7 @@ interface Recommendation {
   documents?: Document[];
 }
 
-export const AIRecommendations: React.FC<AIRecommendationsProps> = ({ documents }) => {
+export const AIRecommendations: React.FC<AIRecommendationsProps> = ({ documents, onRefresh }) => {
   const [processingAction, setProcessingAction] = useState<string | null>(null);
   const { toast } = useToast();
 
@@ -98,8 +100,10 @@ export const AIRecommendations: React.FC<AIRecommendationsProps> = ({ documents 
         description: result.message || `Processed ${result.processedCount || 0} documents`,
       });
 
-      // Optionally trigger a refresh of the documents list
-      window.location.reload();
+      // Refresh the documents list
+      if (onRefresh) {
+        onRefresh();
+      }
 
     } catch (error) {
       console.error('Error processing documents:', error);
@@ -247,7 +251,7 @@ export const AIRecommendations: React.FC<AIRecommendationsProps> = ({ documents 
     // Find recently uploaded documents without AI analysis
     const recentUnanalyzed = documents.filter(doc => {
       const daysSinceUpload = (Date.now() - new Date(doc.created_at).getTime()) / (1000 * 60 * 60 * 24);
-      return daysSinceUpload <= 7 && !doc.insights;
+      return daysSinceUpload <= 7 && !doc.insights && !doc.is_deleted;
     });
 
     if (recentUnanalyzed.length > 0) {

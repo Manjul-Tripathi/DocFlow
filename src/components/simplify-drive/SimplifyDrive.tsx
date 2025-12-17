@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { useToast } from '@/hooks/use-toast';
 import { useOfflineMode } from '@/hooks/useOfflineMode';
+import { supabase } from '@/integrations/supabase/client';
 
 import { FeatureNavigation } from './components/FeatureNavigation';
 import { SimplifyDriveHeader } from './components/SimplifyDriveHeader';
@@ -10,6 +11,10 @@ import { FeatureContent } from './components/FeatureContent';
 import { DocumentModals } from './components/DocumentModals';
 import { DocumentChatbot } from '../document-manager/DocumentChatbot';
 import { DocumentViewer } from '../document-manager/DocumentViewer';
+import { 
+  OfflineDocumentsPanel, 
+  SyncStatusDialog 
+} from '../offline';
 import { useDocuments } from './hooks/useDocuments';
 import { useDocumentFiltering } from './hooks/useDocumentFiltering';
 import type { Document, ViewMode, SortOrder } from './types';
@@ -50,9 +55,13 @@ export function SimplifyDrive() {
   // Chatbot State
   const [showChatbot, setShowChatbot] = useState(true);
   const [chatbotMinimized, setChatbotMinimized] = useState(true);
+  
+  // Offline State
+  const [showOfflinePanel, setShowOfflinePanel] = useState(false);
+  const [showSyncDialog, setShowSyncDialog] = useState(false);
 
   const { toast } = useToast();
-  const { status: offlineStatus } = useOfflineMode();
+  const { status: offlineStatus, syncPendingChanges } = useOfflineMode();
 
   // Handlers
   const handleDocumentProcessed = useCallback((documentId: string) => {
@@ -84,6 +93,71 @@ export function SimplifyDrive() {
     setSummaryDocument(doc);
     setShowSummaryDialog(true);
   }, []);
+
+  const handleUploadScannedPages = useCallback(async (pages: any[]) => {
+    try {
+      const user = await supabase.auth.getUser();
+      if (!user.data.user) {
+        throw new Error('User not authenticated');
+      }
+
+      toast({
+        title: "Uploading scanned documents...",
+        description: `Processing ${pages.length} page(s)`,
+      });
+
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
+        
+        // Convert data URL to blob
+        const response = await fetch(page.fullImage);
+        const blob = await response.blob();
+
+        // Create file from blob
+        const file = new File([blob], page.fileName, { type: blob.type });
+
+        // Upload to Supabase storage
+        const fileName = `${user.data.user.id}/${Date.now()}_${page.fileName}`;
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('documents')
+          .upload(fileName, file);
+
+        if (uploadError) {
+          throw uploadError;
+        }
+
+        // Create document record
+        const { error: insertError } = await supabase
+          .from('documents')
+          .insert({
+            user_id: user.data.user.id,
+            file_name: page.fileName,
+            file_type: blob.type,
+            file_size: file.size,
+            storage_path: fileName,
+            processing_status: 'pending',
+            metadata: {
+              source: 'scanner',
+              page_number: page.pageNumber,
+              rotation: page.rotation,
+            }
+          });
+
+        if (insertError) {
+          throw insertError;
+        }
+      }
+
+      refetch();
+      toast({
+        title: "Documents uploaded successfully",
+        description: `${pages.length} page(s) uploaded and processing started`,
+      });
+    } catch (error) {
+      console.error('Failed to upload scanned documents:', error);
+      throw error;
+    }
+  }, [refetch, toast]);
 
   // Loading state
   if (loading) {
@@ -121,7 +195,12 @@ export function SimplifyDrive() {
           onUpload={() => setShowUploadModal(true)}
           onScan={() => setShowScannerModal(true)}
           onChatbot={() => setShowChatbot(true)}
+          onOfflinePanel={() => setShowOfflinePanel(true)}
+          onSync={() => setShowSyncDialog(true)}
           isOnline={offlineStatus.isOnline}
+          offlineCount={offlineStatus.offlineDocumentCount}
+          pendingSyncCount={offlineStatus.pendingSyncCount}
+          isSyncing={offlineStatus.isSyncing}
         />
       )}
 
@@ -157,6 +236,7 @@ export function SimplifyDrive() {
         onDocumentProcessed={handleDocumentProcessed}
         showScannerModal={showScannerModal}
         onCloseScannerModal={() => setShowScannerModal(false)}
+        onUploadScannedPages={handleUploadScannedPages}
         showShortcutDialog={showShortcutDialog}
         onCloseShortcutDialog={() => setShowShortcutDialog(false)}
         shortcutDocument={shortcutDocument}
@@ -182,6 +262,18 @@ export function SimplifyDrive() {
           setShowDocumentViewer(false);
           setSelectedDocument(null);
         }}
+      />
+      
+      {/* Offline Documents Panel */}
+      <OfflineDocumentsPanel
+        isOpen={showOfflinePanel}
+        onClose={() => setShowOfflinePanel(false)}
+      />
+      
+      {/* Sync Status Dialog */}
+      <SyncStatusDialog
+        isOpen={showSyncDialog}
+        onClose={() => setShowSyncDialog(false)}
       />
     </div>
   );

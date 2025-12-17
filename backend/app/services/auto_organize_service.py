@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 from supabase import create_client, Client
 from dotenv import load_dotenv
 import uuid
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,62 @@ class AutoOrganizeService:
             
             existing_folders = {f['name'].lower(): f for f in (existing_folders_response.data or [])}
             
+            # Create a mapping for fuzzy matching (handles typos, plural/singular, etc.)
+            def calculate_similarity(str1: str, str2: str) -> float:
+                """Calculate similarity ratio between two strings (0.0 to 1.0)."""
+                str1, str2 = str1.lower(), str2.lower()
+                if str1 == str2:
+                    return 1.0
+                
+                # Calculate Levenshtein distance
+                if len(str1) < len(str2):
+                    str1, str2 = str2, str1
+                
+                if len(str2) == 0:
+                    return 0.0
+                
+                previous_row = range(len(str2) + 1)
+                for i, c1 in enumerate(str1):
+                    current_row = [i + 1]
+                    for j, c2 in enumerate(str2):
+                        # Cost of insertions, deletions, or substitutions
+                        insertions = previous_row[j + 1] + 1
+                        deletions = current_row[j] + 1
+                        substitutions = previous_row[j] + (c1 != c2)
+                        current_row.append(min(insertions, deletions, substitutions))
+                    previous_row = current_row
+                
+                distance = previous_row[-1]
+                max_len = max(len(str1), len(str2))
+                return 1.0 - (distance / max_len)
+            
+            def find_similar_folder(folder_name: str, existing: dict) -> Optional[str]:
+                """Find similar folder names to avoid duplicates."""
+                normalized = folder_name.lower().strip()
+                # Remove common suffixes for matching
+                base_name = normalized.replace(' documents', '').replace(' document', '')
+                
+                best_match = None
+                best_similarity = 0.0
+                
+                for existing_name in existing.keys():
+                    existing_base = existing_name.replace(' documents', '').replace(' document', '')
+                    
+                    # Exact match (case-insensitive)
+                    if base_name == existing_base:
+                        return existing_name
+                    
+                    # Calculate similarity
+                    similarity = calculate_similarity(base_name, existing_base)
+                    
+                    # Consider it a match if similarity is 85% or higher
+                    # This will catch: vehical/vehicle, registration/registeration, etc.
+                    if similarity >= 0.85 and similarity > best_similarity:
+                        best_similarity = similarity
+                        best_match = existing_name
+                
+                return best_match
+            
             folders_created = []
             documents_organized = 0
             
@@ -147,46 +204,52 @@ class AutoOrganizeService:
                 folder_name = self._format_folder_name(doc_type)
                 folder_key = folder_name.lower()
                 
-                # Check if folder already exists
+                # Check if folder already exists (exact match)
                 if folder_key in existing_folders:
                     folder_id = existing_folders[folder_key]['id']
                     logger.info(f"📁 Using existing folder: {folder_name}")
                 else:
-                    # Create new folder
-                    color = DOCUMENT_TYPE_COLORS.get(doc_type, DOCUMENT_TYPE_COLORS['other'])
-                    icon = DOCUMENT_TYPE_ICONS.get(doc_type, DOCUMENT_TYPE_ICONS['other'])
-                    
-                    new_folder = {
-                        'user_id': user_id,
-                        'name': folder_name,
-                        'description': f'Documents of type: {folder_name}',
-                        'folder_color': color,
-                        'icon': icon,
-                        'document_count': 0,
-                        'filter_rules': {
-                            'document_type': [doc_type],
-                            'auto_organize': True
-                        },
-                        'order_index': order_index
-                    }
-                    
-                    folder_response = self.supabase.from_('smart_folders').insert(new_folder).execute()
-                    
-                    if folder_response.data:
-                        folder_id = folder_response.data[0]['id']
-                        order_index += 1
-                        logger.info(f"✨ Created new folder: {folder_name}")
-                        
-                        folders_created.append({
-                            'folderId': folder_id,
-                            'folderName': folder_name,
-                            'documentType': doc_type,
-                            'documentCount': len(docs),
-                            'color': color
-                        })
+                    # Check for similar folders (fuzzy match)
+                    similar_folder_key = find_similar_folder(folder_name, existing_folders)
+                    if similar_folder_key:
+                        folder_id = existing_folders[similar_folder_key]['id']
+                        logger.info(f"📁 Using similar existing folder '{existing_folders[similar_folder_key]['name']}' for '{folder_name}'")
                     else:
-                        logger.error(f"Failed to create folder: {folder_name}")
-                        continue
+                        # Create new folder
+                        color = DOCUMENT_TYPE_COLORS.get(doc_type, DOCUMENT_TYPE_COLORS['other'])
+                        icon = DOCUMENT_TYPE_ICONS.get(doc_type, DOCUMENT_TYPE_ICONS['other'])
+                        
+                        new_folder = {
+                            'user_id': user_id,
+                            'name': folder_name,
+                            'description': f'Documents of type: {folder_name}',
+                            'folder_color': color,
+                            'icon': icon,
+                            'document_count': 0,
+                            'filter_rules': {
+                                'document_type': [doc_type],
+                                'auto_organize': True
+                            },
+                            'order_index': order_index
+                        }
+                        
+                        folder_response = self.supabase.from_('smart_folders').insert(new_folder).execute()
+                        
+                        if folder_response.data:
+                            folder_id = folder_response.data[0]['id']
+                            order_index += 1
+                            logger.info(f"✨ Created new folder: {folder_name}")
+                            
+                            folders_created.append({
+                                'folderId': folder_id,
+                                'folderName': folder_name,
+                                'documentType': doc_type,
+                                'documentCount': len(docs),
+                                'color': color
+                            })
+                        else:
+                            logger.error(f"Failed to create folder: {folder_name}")
+                            continue
                 
                 # Step 5: Assign documents to folder
                 for doc in docs:
@@ -236,9 +299,7 @@ class AutoOrganizeService:
         name = doc_type.replace('_', ' ').replace('-', ' ')
         # Capitalize each word
         name = ' '.join(word.capitalize() for word in name.split())
-        # Add 'Documents' suffix if not already present
-        if not name.lower().endswith('documents'):
-            name = f"{name} Documents"
+        # Don't add 'Documents' suffix - keep names clean
         return name
 
     async def process_pending_documents(self, user_id: str, document_ids: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -270,10 +331,10 @@ class AutoOrganizeService:
                     "message": "No pending documents found"
                 }
             
-            # Filter documents that need processing
+            # Filter documents that need processing (no analysis_result or empty {} means not processed)
             pending_docs = [
                 doc for doc in docs_response.data
-                if not doc.get('document_type') or doc.get('document_type') == 'unknown'
+                if not doc.get('analysis_result') or (isinstance(doc.get('analysis_result'), dict) and len(doc.get('analysis_result')) == 0)
             ]
             
             if not pending_docs:
@@ -293,9 +354,22 @@ class AutoOrganizeService:
                     # Try to infer document type from filename or extracted text
                     doc_type = self._infer_document_type(doc)
                     
-                    # Update document with inferred type
+                    # Create basic analysis result to mark document as processed
+                    analysis_result = {
+                        'processed': True,
+                        'document_type': doc_type,
+                        'processed_at': datetime.utcnow().isoformat(),
+                        'summary': f'Document identified as {doc_type.replace("-", " ").title()}',
+                        'key_topics': [doc_type],
+                        'importance_score': 0.7,
+                        'ai_generated_title': doc.get('file_name', 'Unknown')
+                    }
+                    
+                    # Update document with inferred type and analysis result
                     self.supabase.from_('documents').update({
-                        'document_type': doc_type
+                        'document_type': doc_type,
+                        'analysis_result': analysis_result,
+                        'processing_status': 'completed'
                     }).eq('id', doc['id']).execute()
                     
                     processed_documents.append({

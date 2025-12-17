@@ -12,6 +12,7 @@ interface DocumentModalsProps {
   onDocumentProcessed: (documentId: string) => void;
   showScannerModal: boolean;
   onCloseScannerModal: () => void;
+  onUploadScannedPages?: (pages: any[]) => Promise<void>;
   showShortcutDialog: boolean;
   onCloseShortcutDialog: () => void;
   shortcutDocument: Document | null;
@@ -26,6 +27,7 @@ export function DocumentModals({
   onDocumentProcessed,
   showScannerModal,
   onCloseScannerModal,
+  onUploadScannedPages,
   showShortcutDialog,
   onCloseShortcutDialog,
   shortcutDocument,
@@ -47,11 +49,11 @@ export function DocumentModals({
       </Dialog>
 
       <Dialog open={showScannerModal} onOpenChange={onCloseScannerModal}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Scan Documents</DialogTitle>
           </DialogHeader>
-          <BatchDocumentScanner />
+          <BatchDocumentScanner onUploadToStorage={onUploadScannedPages} />
         </DialogContent>
       </Dialog>
 

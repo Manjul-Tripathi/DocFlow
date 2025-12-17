@@ -878,8 +878,8 @@ async def get_user_documents(user_id: str, document_type: Optional[str] = None):
         
         supabase = get_supabase_client()
         
-        # Build query - select all fields including storage_path, is_deleted, deleted_at
-        query = supabase.table('documents').select('id, user_id, file_name, file_type, file_size, storage_path, created_at, updated_at, extracted_text, processing_status, metadata, document_type, is_deleted, deleted_at').eq('user_id', user_id)
+        # Build query - select all fields including storage_path, is_deleted, deleted_at, analysis_result
+        query = supabase.table('documents').select('id, user_id, file_name, file_type, file_size, storage_path, created_at, updated_at, extracted_text, processing_status, metadata, document_type, is_deleted, deleted_at, analysis_result').eq('user_id', user_id)
         
         # Filter by document type if specified
         if document_type and document_type != 'all':
@@ -941,6 +941,12 @@ async def get_user_documents(user_id: str, document_type: Optional[str] = None):
             
             # Add public/signed URL for storage_path
             doc_with_url = doc.copy()
+            
+            # Map analysis_result to insights for frontend compatibility
+            # Check if analysis_result is a non-empty dict (not just {})
+            analysis_result = doc.get('analysis_result')
+            if analysis_result and isinstance(analysis_result, dict) and len(analysis_result) > 0:
+                doc_with_url['insights'] = analysis_result
             
             # Add folders array
             doc_with_url['folders'] = folders_map.get(doc['id'], [])

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
+import { scannerService } from '@/services/scannerService';
 import {
   Scan,
   Play,
@@ -169,7 +170,7 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
     });
   }, [currentBatch, isPaused, scanSettings.outputFormat]);
 
-  const startScanning = () => {
+  const startScanning = async () => {
     if (!selectedScanner) {
       toast.error('Please select a scanner first');
       return;
@@ -184,14 +185,67 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
     
     setCurrentBatch(prev => prev ? { ...prev, status: 'scanning' } : prev);
 
-    // Simulate continuous scanning
-    scanIntervalRef.current = setInterval(() => {
-      simulateScan();
-    }, 1500);
-
-    toast.success('Scanning started', {
-      description: 'Documents will be scanned continuously'
+    toast.info('Starting scan...', {
+      description: 'Initializing scanner connection'
     });
+
+    try {
+      // Perform actual scan using scanner service
+      const scannedDoc = await scannerService.scanDocument(selectedScanner.id, {
+        resolution: scanSettings.resolution,
+        colorMode: scanSettings.colorMode,
+        paperSize: scanSettings.paperSize,
+        duplex: scanSettings.duplex,
+        format: scanSettings.outputFormat,
+      });
+
+      // Convert blob to data URL for preview
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const dataUrl = reader.result as string;
+        const pageNum = (currentBatch?.pages.length || 0) + 1;
+
+        const newPage: ScannedPage = {
+          id: scannedDoc.id,
+          pageNumber: pageNum,
+          thumbnail: dataUrl,
+          fullImage: dataUrl,
+          status: 'complete',
+          fileName: scannedDoc.fileName,
+          fileSize: scannedDoc.data.size,
+          dimensions: { width: 2480, height: 3508 },
+          rotation: 0,
+          isBlank: false,
+        };
+
+        setCurrentBatch(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            pages: [...prev.pages, newPage],
+            scannedPages: prev.scannedPages + 1,
+            totalPages: prev.totalPages + 1,
+            status: 'idle',
+          };
+        });
+
+        toast.success('Document scanned successfully', {
+          description: `${scannedDoc.fileName} (${(scannedDoc.data.size / 1024).toFixed(1)} KB)`,
+        });
+      };
+
+      reader.readAsDataURL(scannedDoc.data);
+
+    } catch (error) {
+      console.error('Scanning failed:', error);
+      toast.error('Scanning failed', {
+        description: error instanceof Error ? error.message : 'Unknown error occurred',
+      });
+      
+      setCurrentBatch(prev => prev ? { ...prev, status: 'error' } : prev);
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   const pauseScanning = () => {
@@ -225,6 +279,38 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
     
     if (currentBatch && onBatchComplete) {
       onBatchComplete(currentBatch);
+    }
+  };
+
+  const uploadScannedDocuments = async () => {
+    if (!currentBatch || currentBatch.pages.length === 0) {
+      toast.error('No pages to upload');
+      return;
+    }
+
+    if (onUploadToStorage) {
+      try {
+        toast.info('Uploading scanned documents...', {
+          description: `Uploading ${currentBatch.pages.length} page(s)`,
+        });
+
+        await onUploadToStorage(currentBatch.pages);
+
+        toast.success('Documents uploaded successfully', {
+          description: `${currentBatch.pages.length} page(s) uploaded to storage`,
+        });
+
+        // Clear current batch after successful upload
+        setCurrentBatch(null);
+        setSelectedPages(new Set());
+      } catch (error) {
+        console.error('Upload failed:', error);
+        toast.error('Upload failed', {
+          description: error instanceof Error ? error.message : 'Unknown error occurred',
+        });
+      }
+    } else {
+      toast.info('Upload handler not configured');
     }
   };
 

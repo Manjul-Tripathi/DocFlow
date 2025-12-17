@@ -401,8 +401,8 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
       ) : (
         <div className="space-y-2">
           {folders.map((folder, index) => (
-            <div key={folder.id} className="flex items-center gap-2">
-              <div className="flex flex-col gap-1">
+            <div key={folder.id} className="flex items-center gap-2 w-full">
+              <div className="flex flex-col gap-1 flex-shrink-0">
                 <Button
                   variant="outline"
                   size="sm"
@@ -426,12 +426,12 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
               </div>
               <Button
                 variant={selectedFolder === folder.id ? 'default' : 'ghost'}
-                className="w-full justify-start h-auto p-3 flex-1"
+                className="justify-start h-auto p-3 flex-1 min-w-0"
                 onClick={() => onFolderSelect(folder.id)}
               >
-                <div className="flex items-center gap-3 w-full">
+                <div className="flex items-center gap-2 w-full min-w-0">
                   <div 
-                    className="p-1 rounded"
+                    className="p-1 rounded flex-shrink-0"
                     style={{ 
                       backgroundColor: `${folder.color}20`,
                       color: folder.color 
@@ -440,17 +440,17 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
                     {iconMap[folder.icon] || <Folder className="w-4 h-4" />}
                   </div>
                   <div className="text-left flex-1 min-w-0">
-                    <div className="font-medium truncate flex items-center gap-2">
-                      {folder.name}
+                    <div className="font-medium truncate flex items-center gap-1">
+                      <span className="truncate">{folder.name}</span>
                       {folder.is_smart && (
-                        <Brain className="w-3 h-3 text-primary" />
+                        <Brain className="w-3 h-3 text-primary flex-shrink-0" />
                       )}
                     </div>
                     <div className="text-xs text-muted-foreground truncate">
                       {folder.document_count} documents
                     </div>
                   </div>
-                  <Badge variant="secondary" className="text-xs">
+                  <Badge variant="secondary" className="text-xs flex-shrink-0">
                     {folder.document_count}
                   </Badge>
                 </div>
@@ -460,7 +460,7 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-8 w-8 p-0"
+                    className="h-8 w-8 p-0 flex-shrink-0"
                     onClick={(e: any) => e.stopPropagation()}
                   >
                     <MoreHorizontal className="w-4 h-4" />
@@ -521,13 +521,34 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
             <Sparkles className="w-4 h-4 text-blue-600" />
             <span className="text-sm font-medium">AI Organization</span>
           </div>
-          <p className="text-xs text-muted-foreground mb-2">
+          <p className="text-xs text-muted-foreground mb-3">
             Documents are automatically organized based on content, type, and importance.
           </p>
-          <Button variant="outline" size="sm" className="w-full" onClick={() => setShowCustomizeModal(true)}>
-            <Settings className="w-3 h-3 mr-1" />
-            Customize Rules
-          </Button>
+          <div className="space-y-2">
+            <Button 
+              variant="default" 
+              size="sm" 
+              className="w-full" 
+              onClick={createSmartFoldersFromDocuments}
+              disabled={isOrganizing}
+            >
+              {isOrganizing ? (
+                <>
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                  Organizing...
+                </>
+              ) : (
+                <>
+                  <Brain className="w-3 h-3 mr-1" />
+                  Auto-Organize Documents
+                </>
+              )}
+            </Button>
+            <Button variant="outline" size="sm" className="w-full" onClick={() => setShowCustomizeModal(true)}>
+              <Settings className="w-3 h-3 mr-1" />
+              Customize Rules
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

@@ -6,12 +6,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download, ExternalLink, X, Tags, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Download, ExternalLink, X, Tags, ChevronRight, ChevronLeft, CloudOff } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { DocumentMetadataEditor } from '@/components/metadata';
 import { useContentAccessRules } from '@/hooks/useContentAccessRules';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ShieldAlert } from 'lucide-react';
+import { initOfflineDB } from '@/services/offlineStorage';
 
 interface Document {
   id: string;
@@ -37,6 +38,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [resolvedUrl, setResolvedUrl] = React.useState<string | null>(null);
   const [isLoadingUrl, setIsLoadingUrl] = React.useState(false);
   const [showMetadata, setShowMetadata] = React.useState(false);
+  const [isOfflineDocument, setIsOfflineDocument] = React.useState(false);
 
   // Check file type more accurately - prioritize file extension
   const fileName = (document?.file_name || '').toLowerCase();
@@ -49,28 +51,69 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // PDF check - only if NOT an image
   const isPDF = !isImage && (fileExt === 'pdf' || document?.file_type === 'application/pdf');
 
-  // Generate signed URL when document opens
+  // Check if document is available offline and load from IndexedDB
   React.useEffect(() => {
-    if (!isOpen || !document?.storage_path) {
+    if (!isOpen || !document?.id) {
       setResolvedUrl(null);
+      setIsOfflineDocument(false);
       return;
     }
 
-    setIsLoadingUrl(true);
-    const generateSignedUrl = async () => {
+    const loadDocument = async () => {
+      setIsLoadingUrl(true);
+
+      console.log('🔍 DocumentViewer loading document:', {
+        id: document.id,
+        file_name: document.file_name,
+        storage_path: document.storage_path,
+        file_type: document.file_type
+      });
+
+      try {
+        // First, try to load from offline storage
+        const db = await initOfflineDB();
+        const offlineDoc = await db.get('documents', document.id);
+
+        console.log('📦 Offline document check:', {
+          found: !!offlineDoc,
+          has_blob: !!offlineDoc?.blob_data,
+          blob_size: offlineDoc?.blob_data?.size || 0,
+          blob_type: offlineDoc?.blob_data?.type || 'none'
+        });
+
+        if (offlineDoc?.blob_data) {
+          console.log('✅ Loading document from offline storage blob');
+          const blobUrl = URL.createObjectURL(offlineDoc.blob_data);
+          setResolvedUrl(blobUrl);
+          setIsOfflineDocument(true);
+          setIsLoadingUrl(false);
+          return;
+        } else {
+          console.log('⚠️ Document found but no blob_data available');
+        }
+      } catch (error) {
+        console.error('❌ Error checking offline storage:', error);
+      }
+
+      // If not offline or failed, try to load from server
+      if (!document.storage_path) {
+        console.error('No storage path available');
+        setResolvedUrl(null);
+        setIsLoadingUrl(false);
+        return;
+      }
+
       try {
         const { data, error } = await supabase.storage
           .from('documents')
-          .createSignedUrl(document.storage_path!, 3600); // Valid for 1 hour
+          .createSignedUrl(document.storage_path, 3600);
 
         if (error) {
           console.error('Failed to generate signed URL:', error);
           setResolvedUrl(null);
-          return;
-        }
-
-        if (data?.signedUrl) {
+        } else if (data?.signedUrl) {
           setResolvedUrl(data.signedUrl);
+          setIsOfflineDocument(false);
         }
       } catch (err) {
         console.error('Error generating signed URL:', err);
@@ -80,8 +123,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       }
     };
 
-    generateSignedUrl();
-  }, [isOpen, document?.storage_path]);
+    loadDocument();
+  }, [isOpen, document?.id, document?.storage_path]);
 
   // Fetch image as blob to bypass CORS issues
   React.useEffect(() => {
@@ -104,15 +147,20 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       });
   }, [document?.id, resolvedUrl, isImage, isOpen]);
 
-  // Cleanup object URL when component unmounts
+  // Cleanup object URL when component unmounts or dialog closes
   React.useEffect(() => {
     return () => {
       if (imageObjectUrl) {
         URL.revokeObjectURL(imageObjectUrl);
         setImageObjectUrl(null);
       }
+      // Also cleanup resolvedUrl if it's an offline blob URL
+      if (resolvedUrl && isOfflineDocument) {
+        URL.revokeObjectURL(resolvedUrl);
+        setResolvedUrl(null);
+      }
     };
-  }, []);
+  }, [imageObjectUrl, resolvedUrl, isOfflineDocument, isOpen]);
 
   // Debug log
   React.useEffect(() => {
@@ -186,9 +234,17 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       <DialogContent className="max-w-6xl h-[90vh] flex flex-col p-0">
         <DialogHeader className="px-6 py-4 border-b">
           <div className="flex items-center justify-between">
-            <DialogTitle className="text-lg font-semibold truncate pr-4">
-              {document.file_name}
-            </DialogTitle>
+            <div className="flex items-center gap-2">
+              <DialogTitle className="text-lg font-semibold truncate pr-4">
+                {document.file_name}
+              </DialogTitle>
+              {isOfflineDocument && (
+                <div className="flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded text-xs">
+                  <CloudOff className="w-3 h-3" />
+                  <span>Offline</span>
+                </div>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <Button
                 variant={showMetadata ? "default" : "outline"}

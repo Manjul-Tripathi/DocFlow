@@ -367,6 +367,11 @@ export const DocumentManager: React.FC = () => {
     });
   }, []);
 
+  const handleRefresh = useCallback(() => {
+    fetchDocuments();
+    setRefreshCounter(prev => prev + 1);
+  }, []);
+
   const handleDocumentClick = (document: Document) => {
     setSelectedDocument(document);
     setShowDocumentViewer(true);
@@ -779,7 +784,7 @@ export const DocumentManager: React.FC = () => {
                 <TabsContent value="insights" className="mt-4">
                   <div className="space-y-4">
                     <DocumentInsights documents={filteredDocuments} />
-                    <AIRecommendations documents={filteredDocuments} />
+                    <AIRecommendations documents={filteredDocuments} onRefresh={handleRefresh} />
                   </div>
                 </TabsContent>
               </Tabs>
