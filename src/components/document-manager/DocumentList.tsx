@@ -17,7 +17,8 @@ import {
   Sparkles,
   Pin,
   Lock,
-  UserMinus
+  UserMinus,
+  Edit
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
@@ -31,6 +32,7 @@ import {
 } from "@/components/ui/tooltip";
 import { CheckOutDialog } from '@/components/checkinout/CheckOutDialog';
 import { TransferOwnershipDialog } from '@/components/ownership/TransferOwnershipDialog';
+import { DocumentEditorModal } from './DocumentEditorModal';
 
 interface Document {
   id: string;
@@ -43,6 +45,7 @@ interface Document {
   processing_status: string;
   metadata: any;
   storage_url?: string;
+  storage_path?: string;
   insights?: DocumentInsight;
   tags?: DocumentTag[];
   folders?: SmartFolder[];
@@ -88,6 +91,13 @@ export const DocumentList: React.FC<DocumentListProps> = ({
   const [showCheckOutDialog, setShowCheckOutDialog] = useState(false);
   const [showTransferDialog, setShowTransferDialog] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  const [showEditorModal, setShowEditorModal] = useState(false);
+
+  // Handle edit document
+  const handleEdit = (document: Document) => {
+    setSelectedDocument(document);
+    setShowEditorModal(true);
+  };
 
   const handleView = (document: Document) => {
     // Trigger the parent click handler which opens the modal viewer
@@ -348,6 +358,25 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                               <Button 
                                 variant="ghost" 
                                 size="sm"
+                                className="h-8 w-8 p-0 hover:bg-green-100"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleEdit(document);
+                                }}
+                              >
+                                <Edit className="w-4 h-4 text-green-600" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent><p>Edit</p></TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
                                 className="h-8 w-8 p-0 hover:bg-gray-100"
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -477,6 +506,15 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                 description: "The recipient will be notified to accept or reject the transfer.",
               });
             }}
+          />
+
+          <DocumentEditorModal
+            isOpen={showEditorModal}
+            onClose={() => {
+              setShowEditorModal(false);
+              setSelectedDocument(null);
+            }}
+            document={selectedDocument}
           />
         </>
       )}

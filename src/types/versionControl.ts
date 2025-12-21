@@ -4,26 +4,27 @@ export interface DocumentVersion {
   id: string;
   document_id: string;
   version_number: number;
-  major_version: number;
-  minor_version: number;
-  content?: Record<string, unknown>;
+  content: string | Record<string, unknown>;  // Plain text content or structured content
+  change_summary?: string;
+  created_by?: string;
+  version_created_at?: string;
+  // Additional computed/joined data
+  creator_email?: string;
+  // Extended properties used by the application
+  major_version?: number;
+  minor_version?: number;
+  created_at?: string;  // Alias for version_created_at in some contexts
+  is_current?: boolean;
+  change_type?: 'manual' | 'auto' | 'restore' | 'branch_merge';
+  tags?: string[];
+  metadata?: Record<string, unknown>;
   file_url?: string;
   file_size?: number;
   file_hash?: string;
-  change_summary?: string;
-  ai_change_summary?: string;
-  change_type: 'manual' | 'auto' | 'restore' | 'branch_merge';
-  created_by?: string;
-  created_at: string;
-  is_current: boolean;
   branch_id?: string;
   parent_version_id?: string;
-  tags?: string[];
-  metadata?: Record<string, unknown>;
-  // Joined data
-  creator_email?: string;
-  comments_count?: number;
 }
+
 
 export interface DocumentLock {
   id: string;

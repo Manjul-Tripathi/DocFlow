@@ -1,4 +1,5 @@
 import React from 'react';
+import { renderAsync } from 'docx-preview';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +41,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [isLoadingUrl, setIsLoadingUrl] = React.useState(false);
   const [showMetadata, setShowMetadata] = React.useState(false);
   const [isOfflineDocument, setIsOfflineDocument] = React.useState(false);
+  const docxContainerRef = React.useRef<HTMLDivElement>(null);
+  const [isLoadingDocx, setIsLoadingDocx] = React.useState(false);
 
   // Use document lock hook
   const {
@@ -68,9 +71,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // PDF check - only if NOT an image
   const isPDF = !isImage && (fileExt === 'pdf' || document?.file_type === 'application/pdf');
 
+  // DOCX check - Word document
+  const isDocx = !isImage && !isPDF && (fileExt === 'docx' || document?.file_type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+
   // Check if document is available offline and load from IndexedDB
   React.useEffect(() => {
     if (!isOpen || !document?.id) {
+      console.log('⏭️ Document loading skipped:', { isOpen, hasDocId: !!document?.id });
       setResolvedUrl(null);
       setIsOfflineDocument(false);
       return;
@@ -121,19 +128,21 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       }
 
       try {
+        console.log('🔗 Creating signed URL from storage_path:', document.storage_path);
         const { data, error } = await supabase.storage
           .from('documents')
           .createSignedUrl(document.storage_path, 3600);
 
         if (error) {
-          console.error('Failed to generate signed URL:', error);
+          console.error('❌ Failed to generate signed URL:', error);
           setResolvedUrl(null);
         } else if (data?.signedUrl) {
+          console.log('✅ Signed URL generated:', data.signedUrl.substring(0, 100) + '...');
           setResolvedUrl(data.signedUrl);
           setIsOfflineDocument(false);
         }
       } catch (err) {
-        console.error('Error generating signed URL:', err);
+        console.error('❌ Error generating signed URL:', err);
         setResolvedUrl(null);
       } finally {
         setIsLoadingUrl(false);
@@ -164,6 +173,79 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       });
   }, [document?.id, resolvedUrl, isImage, isOpen]);
 
+  // Render DOCX document
+  React.useEffect(() => {
+    console.log('📄 DOCX render effect:', {
+      isOpen,
+      isDocx,
+      resolvedUrl: !!resolvedUrl,
+      containerRef: !!docxContainerRef.current,
+      fileName,
+      fileExt
+    });
+
+    if (!isOpen || !isDocx || !resolvedUrl) {
+      console.log('⏭️ Skipping DOCX render:', { isOpen, isDocx, resolvedUrl: !!resolvedUrl });
+      return;
+    }
+
+    // Wait for container to be available
+    if (!docxContainerRef.current) {
+      console.log('⏳ Container not ready yet, will retry...');
+      return;
+    }
+
+    const renderDocx = async () => {
+      try {
+        console.log('🔄 Starting DOCX render from:', resolvedUrl);
+        setIsLoadingDocx(true);
+        const response = await fetch(resolvedUrl);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const arrayBuffer = await response.arrayBuffer();
+        console.log('📦 DOCX blob loaded, size:', arrayBuffer.byteLength);
+        
+        if (docxContainerRef.current) {
+          docxContainerRef.current.innerHTML = '';
+          console.log('🎨 Rendering DOCX into container...');
+          
+          await renderAsync(arrayBuffer, docxContainerRef.current, undefined, {
+            className: 'docx-preview-content',
+            inWrapper: true,
+            ignoreWidth: false,
+            ignoreHeight: false,
+            ignoreFonts: false,
+            breakPages: true,
+            debug: true,
+            experimental: true,
+            renderHeaders: true,
+            renderFooters: true,
+            renderFootnotes: true,
+            renderEndnotes: true,
+            useBase64URL: true,
+          });
+          
+          console.log('✅ DOCX rendered successfully, container HTML length:', docxContainerRef.current.innerHTML.length);
+          console.log('📊 Container children count:', docxContainerRef.current.children.length);
+        }
+        setIsLoadingDocx(false);
+      } catch (error) {
+        console.error('❌ Error rendering DOCX:', error);
+        if (docxContainerRef.current) {
+          docxContainerRef.current.innerHTML = '<p style="color: red; padding: 20px;">Failed to render document: ' + (error instanceof Error ? error.message : String(error)) + '</p>';
+        }
+        setIsLoadingDocx(false);
+      }
+    };
+
+    // Small delay to ensure container is mounted
+    const timeoutId = setTimeout(renderDocx, 100);
+    return () => clearTimeout(timeoutId);
+  }, [isOpen, isDocx, resolvedUrl]);
+
   // Cleanup object URL when component unmounts or dialog closes
   React.useEffect(() => {
     return () => {
@@ -182,15 +264,17 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   // Debug log
   React.useEffect(() => {
     if (document) {
-      console.log('Document viewer:', {
+      console.log('📋 Document viewer:', {
         fileName: document.file_name,
         fileType: document.file_type,
         fileExt,
         isImage,
-        isPDF
+        isPDF,
+        isDocx,
+        storagePath: document.storage_path
       });
     }
-  }, [document?.id, fileExt, isImage, isPDF]);
+  }, [document?.id, fileExt, isImage, isPDF, isDocx]);
 
   const handleDownload = async () => {
     if (!resolvedUrl) return;
@@ -372,6 +456,29 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   />
                 ) : (
                   <p className="text-muted-foreground">Failed to load image</p>
+                )}
+              </div>
+            ) : isDocx ? (
+              <div className="w-full h-full overflow-auto bg-gray-100 flex justify-center p-8">
+                {isLoadingDocx ? (
+                  <div className="flex items-center justify-center w-full">
+                    <p className="text-muted-foreground">Loading document...</p>
+                  </div>
+                ) : (
+                  <div className="bg-white shadow-lg" style={{ maxWidth: '210mm', width: '100%' }}>
+                    <div
+                      ref={docxContainerRef}
+                      className="docx-viewer-container"
+                      style={{
+                        padding: '20mm',
+                        minHeight: '297mm',
+                        fontSize: '12pt',
+                        lineHeight: '1.5',
+                        fontFamily: 'Calibri, Arial, sans-serif',
+                        color: '#000'
+                      }}
+                    />
+                  </div>
                 )}
               </div>
             ) : (

@@ -53,6 +53,43 @@ npm run dev
 - **Smart Organization** - AI-powered document categorization and search
 - **Multi-format Support** - PDF, images, and various document formats
 - **Real-time Processing** - Live document processing with progress tracking
+- **✨ Document Editing** - Rich text editor for modifying documents (requires editor server)
+
+## 📝 Document Editing Setup
+
+The application includes a powerful document editor for modifying your documents. To use this feature:
+
+### First Time Setup
+```bash
+# Install editor dependencies
+cd Modern-Document-Editor-main
+npm install
+```
+
+### Daily Usage
+
+**Option 1: Using the Startup Script (Recommended)**
+```bash
+# Double-click this file in Windows Explorer:
+start_editor_server.bat
+```
+
+**Option 2: Manual Start**
+```bash
+cd Modern-Document-Editor-main
+npm run dev
+```
+
+The editor will start on `http://localhost:3001`. Keep this running to use the Edit feature in your documents.
+
+### Using the Editor
+1. Navigate to Documents page
+2. Click the ⋮ menu on any document
+3. Select "Edit"
+4. Make your changes using the rich text editor
+5. Click Save
+
+📖 For detailed instructions, see the [Quick Start Guide](QUICK_START.md) in the artifacts folder.
 
 ## 📚 Documentation
 

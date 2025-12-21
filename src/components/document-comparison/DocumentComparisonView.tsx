@@ -62,6 +62,23 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { VersionComparison, VersionDiff, DocumentVersion } from '@/types/versionControl';
 
+// Helper function for safe date formatting
+function formatSafeDate(dateString: string | null | undefined, formatStr: string = 'MMM d, yyyy · HH:mm'): string {
+  if (!dateString) return 'Unknown date';
+  try {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'Invalid date';
+    return format(date, formatStr);
+  } catch {
+    return 'Invalid date';
+  }
+}
+
+// Helper to get created_at from version (handles both created_at and version_created_at)
+function getVersionCreatedAt(version: any): string | undefined {
+  return version.created_at || version.version_created_at;
+}
+
 interface TextDiff {
   type: 'equal' | 'insert' | 'delete';
   value: string;
@@ -156,20 +173,20 @@ function computeLCS(arr1: string[], arr2: string[]): string[] {
 
 function mergeSimilarDiffs(diffs: TextDiff[]): TextDiff[] {
   if (diffs.length === 0) return [];
-  
+
   const merged: TextDiff[] = [diffs[0]];
-  
+
   for (let i = 1; i < diffs.length; i++) {
     const last = merged[merged.length - 1];
     const current = diffs[i];
-    
+
     if (last.type === current.type) {
       last.value += current.value;
     } else {
       merged.push(current);
     }
   }
-  
+
   return merged;
 }
 
@@ -202,11 +219,11 @@ export function DocumentComparisonView({
   const enhancedDiffs = useMemo<EnhancedDiff[]>(() => {
     return diffs.map((diff, index) => {
       const enhanced: EnhancedDiff = { ...diff, lineNumber: index + 1 };
-      
+
       if (diff.type === 'modified' && typeof diff.oldValue === 'string' && typeof diff.newValue === 'string') {
         enhanced.textDiffs = computeTextDiff(diff.oldValue, diff.newValue);
       }
-      
+
       return enhanced;
     });
   }, [diffs]);
@@ -214,24 +231,24 @@ export function DocumentComparisonView({
   // Filtered diffs
   const filteredDiffs = useMemo(() => {
     let filtered = enhancedDiffs;
-    
+
     if (!showUnchanged) {
       filtered = filtered.filter(d => d.type !== 'unchanged');
     }
-    
+
     if (filter !== 'all') {
       filtered = filtered.filter(d => d.type === filter);
     }
-    
+
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(d => 
+      filtered = filtered.filter(d =>
         d.path.toLowerCase().includes(term) ||
         formatValue(d.oldValue).toLowerCase().includes(term) ||
         formatValue(d.newValue).toLowerCase().includes(term)
       );
     }
-    
+
     return filtered;
   }, [enhancedDiffs, filter, searchTerm, showUnchanged]);
 
@@ -239,14 +256,14 @@ export function DocumentComparisonView({
   const navigateToChange = useCallback((direction: 'prev' | 'next') => {
     const changesCount = filteredDiffs.length;
     if (changesCount === 0) return;
-    
+
     let newIndex: number;
     if (direction === 'next') {
       newIndex = (currentChangeIndex + 1) % changesCount;
     } else {
       newIndex = (currentChangeIndex - 1 + changesCount) % changesCount;
     }
-    
+
     setCurrentChangeIndex(newIndex);
     changeRefs.current[newIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [currentChangeIndex, filteredDiffs.length]);
@@ -362,7 +379,7 @@ export function DocumentComparisonView({
       })),
       ai_summary: aiSummary,
     };
-    
+
     const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -398,7 +415,7 @@ export function DocumentComparisonView({
   // Render inline diff view
   const renderInlineDiff = (diff: EnhancedDiff, index: number) => {
     const isActive = index === currentChangeIndex;
-    
+
     return (
       <div
         ref={el => changeRefs.current[index] = el}
@@ -423,7 +440,7 @@ export function DocumentComparisonView({
             {diff.type}
           </Badge>
         </div>
-        
+
         {diff.textDiffs ? (
           renderTextDiff(diff.textDiffs)
         ) : (
@@ -457,7 +474,7 @@ export function DocumentComparisonView({
   };
 
   return (
-    <div 
+    <div
       ref={containerRef}
       className={cn(
         'flex flex-col bg-background border rounded-lg overflow-hidden',
@@ -489,7 +506,7 @@ export function DocumentComparisonView({
                 <TooltipContent>Export Diff Report</TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            
+
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -500,7 +517,7 @@ export function DocumentComparisonView({
                 <TooltipContent>{isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}</TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            
+
             <Button variant="ghost" size="sm" onClick={onClose}>
               <X className="h-4 w-4" />
             </Button>
@@ -517,7 +534,7 @@ export function DocumentComparisonView({
               v{baseVersion.major_version}.{baseVersion.minor_version}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {format(new Date(baseVersion.created_at), 'MMM d, yyyy · HH:mm')}
+              {formatSafeDate(getVersionCreatedAt(baseVersion))}
             </p>
             {baseVersion.change_summary && (
               <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
@@ -525,14 +542,14 @@ export function DocumentComparisonView({
               </p>
             )}
           </div>
-          
+
           <div className="flex flex-col items-center gap-1">
             <div className="p-2 rounded-full bg-primary/10">
               <ArrowLeftRight className="h-5 w-5 text-primary" />
             </div>
             <span className="text-xs text-muted-foreground">vs</span>
           </div>
-          
+
           <div className="flex-1 text-center">
             <Badge variant="outline" className="mb-2 bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
               Compare Version
@@ -541,7 +558,7 @@ export function DocumentComparisonView({
               v{compareVersion.major_version}.{compareVersion.minor_version}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {format(new Date(compareVersion.created_at), 'MMM d, yyyy · HH:mm')}
+              {formatSafeDate(getVersionCreatedAt(compareVersion))}
             </p>
             {compareVersion.change_summary && (
               <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
@@ -557,8 +574,8 @@ export function DocumentComparisonView({
             onClick={() => setFilter(filter === 'added' ? 'all' : 'added')}
             className={cn(
               'flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all border',
-              filter === 'added' 
-                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-600 dark:text-emerald-400 shadow-sm' 
+              filter === 'added'
+                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-600 dark:text-emerald-400 shadow-sm'
                 : 'hover:bg-muted border-transparent'
             )}
           >
@@ -570,8 +587,8 @@ export function DocumentComparisonView({
             onClick={() => setFilter(filter === 'removed' ? 'all' : 'removed')}
             className={cn(
               'flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all border',
-              filter === 'removed' 
-                ? 'bg-red-500/20 border-red-500/50 text-red-600 dark:text-red-400 shadow-sm' 
+              filter === 'removed'
+                ? 'bg-red-500/20 border-red-500/50 text-red-600 dark:text-red-400 shadow-sm'
                 : 'hover:bg-muted border-transparent'
             )}
           >
@@ -583,8 +600,8 @@ export function DocumentComparisonView({
             onClick={() => setFilter(filter === 'modified' ? 'all' : 'modified')}
             className={cn(
               'flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all border',
-              filter === 'modified' 
-                ? 'bg-amber-500/20 border-amber-500/50 text-amber-600 dark:text-amber-400 shadow-sm' 
+              filter === 'modified'
+                ? 'bg-amber-500/20 border-amber-500/50 text-amber-600 dark:text-amber-400 shadow-sm'
                 : 'hover:bg-muted border-transparent'
             )}
           >
@@ -597,8 +614,8 @@ export function DocumentComparisonView({
               onClick={() => setShowUnchanged(!showUnchanged)}
               className={cn(
                 'flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all border',
-                showUnchanged 
-                  ? 'bg-muted border-border shadow-sm' 
+                showUnchanged
+                  ? 'bg-muted border-border shadow-sm'
                   : 'hover:bg-muted border-transparent opacity-60'
               )}
             >
@@ -713,7 +730,7 @@ export function DocumentComparisonView({
             />
             <Label htmlFor="line-numbers" className="text-xs cursor-pointer">#</Label>
           </div>
-          
+
           <div className="flex items-center gap-2">
             <Switch
               id="word-wrap"
@@ -723,7 +740,7 @@ export function DocumentComparisonView({
             />
             <Label htmlFor="word-wrap" className="text-xs cursor-pointer">Wrap</Label>
           </div>
-          
+
           <div className="flex items-center gap-2">
             <Switch
               id="whitespace"
@@ -997,9 +1014,9 @@ export function DocumentComparisonView({
               </div>
               <p className="text-lg font-medium text-foreground">No changes found</p>
               <p className="text-sm text-muted-foreground mt-1">
-                {filter !== 'all' 
+                {filter !== 'all'
                   ? `No ${filter} changes to display. Try a different filter.`
-                  : searchTerm 
+                  : searchTerm
                     ? 'Try a different search term.'
                     : 'The versions are identical.'}
               </p>

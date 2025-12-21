@@ -29,7 +29,8 @@ import {
   FolderPlus,
   CloudOff,
   CloudDownload,
-  RotateCcw
+  RotateCcw,
+  Edit
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
@@ -45,6 +46,7 @@ import { CheckOutDialog } from '@/components/checkinout/CheckOutDialog';
 import { TransferOwnershipDialog } from '@/components/ownership/TransferOwnershipDialog';
 import { useOfflineMode } from '@/hooks/useOfflineMode';
 import { MoveToFolderDialog } from './MoveToFolderDialog';
+import { DocumentEditorModal } from './DocumentEditorModal';
 
 interface Document {
   id: string;
@@ -57,6 +59,7 @@ interface Document {
   processing_status: string;
   metadata: any;
   storage_url?: string;
+  storage_path?: string;
   insights?: DocumentInsight;
   tags?: DocumentTag[];
   folders?: SmartFolder[];
@@ -107,6 +110,13 @@ export const DocumentGrid: React.FC<DocumentGridProps> = ({
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [offlineDocIds, setOfflineDocIds] = useState<Set<string>>(new Set());
+  const [showEditorModal, setShowEditorModal] = useState(false);
+
+  // Handle edit document
+  const handleEdit = (document: Document) => {
+    setSelectedDocument(document);
+    setShowEditorModal(true);
+  };
 
   // Check which documents are available offline
   React.useEffect(() => {
@@ -411,6 +421,13 @@ export const DocumentGrid: React.FC<DocumentGridProps> = ({
                       <>
                         <DropdownMenuItem onClick={(e) => {
                           e.stopPropagation();
+                          handleEdit(document);
+                        }}>
+                          <Edit className="w-4 h-4 mr-2" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={(e) => {
+                          e.stopPropagation();
                           handleDownload(document);
                         }}>
                           <Download className="w-4 h-4 mr-2" />
@@ -624,6 +641,18 @@ export const DocumentGrid: React.FC<DocumentGridProps> = ({
             documentId={selectedDocument.id}
             documentName={selectedDocument.file_name}
             onMoved={() => {
+              onRefresh?.();
+            }}
+          />
+
+          <DocumentEditorModal
+            isOpen={showEditorModal}
+            onClose={() => {
+              setShowEditorModal(false);
+              setSelectedDocument(null);
+            }}
+            document={selectedDocument}
+            onSave={() => {
               onRefresh?.();
             }}
           />

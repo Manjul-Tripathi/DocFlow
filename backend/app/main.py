@@ -19,6 +19,8 @@ from .api.routes import analyze_router
 from .api.quick_access import router as quick_access_router
 from .api.checkinout import router as checkinout_router
 from .api.ownership_transfers import router as ownership_transfers_router
+from .api.document_editor import router as document_editor_router
+from .api.ai_routes import router as ai_router
 from .core.config import settings
 
 # Configure logging with both console and file handlers
@@ -143,6 +145,8 @@ app.include_router(analyze_router, prefix="/api/v1")
 app.include_router(quick_access_router, prefix="/api/v1")
 app.include_router(checkinout_router)
 app.include_router(ownership_transfers_router)
+app.include_router(document_editor_router, prefix="/api")
+app.include_router(ai_router)
 
 @app.on_event("shutdown")
 async def shutdown_event():

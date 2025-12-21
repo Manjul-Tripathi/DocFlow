@@ -33,6 +33,7 @@ import ImagePreviewPage from "./pages/ImagePreviewPage";
 import RunApplication from "./pages/RunApplication";
 import Settings from "./pages/Settings";
 import BulkTest from "./pages/BulkTest";
+import EditorWrapper from "@/components/modern-editor/EditorWrapper";
 
 // Configure React Query client
 const queryClient = new QueryClient({
@@ -158,6 +159,13 @@ const App = () => (
                 {/* Guest sharing public routes */}
                 <Route path="/guest/:token" element={<GuestAccessPage />} />
                 <Route path="/s/:token" element={<GuestAccessPage />} />
+
+                {/* Document Editor Route - Protected but standalone layout */}
+                <Route path="/editor" element={
+                  <ProtectedRoute>
+                    <EditorWrapper />
+                  </ProtectedRoute>
+                } />
 
                 {/* Protected routes */}
                 {protectedRoutes.map(({ path, element }) => (

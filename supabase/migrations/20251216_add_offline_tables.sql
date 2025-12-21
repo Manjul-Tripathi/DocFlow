@@ -18,27 +18,12 @@ CREATE TABLE IF NOT EXISTS public.offline_access (
     CONSTRAINT offline_access_unique UNIQUE (user_id, document_id)
 );
 
--- Create document_versions table for tracking version history
-CREATE TABLE IF NOT EXISTS public.document_versions (
-    id uuid NOT NULL DEFAULT gen_random_uuid(),
-    document_id uuid NOT NULL,
-    version integer NOT NULL DEFAULT 1,
-    updated_at timestamp with time zone NOT NULL DEFAULT now(),
-    updated_by uuid,
-    change_summary text,
-    CONSTRAINT document_versions_pkey PRIMARY KEY (id),
-    CONSTRAINT document_versions_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id) ON DELETE CASCADE
-);
-
 -- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_offline_access_user_id ON public.offline_access(user_id);
 CREATE INDEX IF NOT EXISTS idx_offline_access_document_id ON public.offline_access(document_id);
-CREATE INDEX IF NOT EXISTS idx_document_versions_document_id ON public.document_versions(document_id);
-CREATE INDEX IF NOT EXISTS idx_document_versions_version ON public.document_versions(document_id, version DESC);
 
 -- Enable RLS
 ALTER TABLE public.offline_access ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.document_versions ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for offline_access
 CREATE POLICY "Users can view their own offline access records"
@@ -56,27 +41,6 @@ CREATE POLICY "Users can update their own offline access records"
 CREATE POLICY "Users can delete their own offline access records"
     ON public.offline_access FOR DELETE
     USING (auth.uid() = user_id);
-
--- RLS Policies for document_versions (public read, owner write)
-CREATE POLICY "Users can view versions of their documents"
-    ON public.document_versions FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.documents 
-            WHERE documents.id = document_versions.document_id 
-            AND documents.user_id = auth.uid()
-        )
-    );
-
-CREATE POLICY "Users can create versions for their documents"
-    ON public.document_versions FOR INSERT
-    WITH CHECK (
-        EXISTS (
-            SELECT 1 FROM public.documents 
-            WHERE documents.id = document_versions.document_id 
-            AND documents.user_id = auth.uid()
-        )
-    );
 
 -- Function to auto-update updated_at
 CREATE OR REPLACE FUNCTION update_offline_access_updated_at()
@@ -96,4 +60,3 @@ CREATE TRIGGER trigger_offline_access_updated_at
 
 -- Comments
 COMMENT ON TABLE public.offline_access IS 'Tracks which documents users have downloaded for offline access';
-COMMENT ON TABLE public.document_versions IS 'Version history for documents to support offline sync conflict detection';
