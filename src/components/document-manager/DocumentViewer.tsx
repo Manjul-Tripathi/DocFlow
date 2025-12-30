@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download, ExternalLink, X, Tags, ChevronRight, ChevronLeft, CloudOff, ShieldAlert } from 'lucide-react';
+import { Download, ExternalLink, X, Tags, ChevronRight, ChevronLeft, CloudOff, ShieldAlert, Droplets } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { DocumentMetadataEditor } from '@/components/metadata';
 import { useContentAccessRules } from '@/hooks/useContentAccessRules';
@@ -15,6 +15,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { initOfflineDB } from '@/services/offlineStorage';
 import { useDocumentLock } from '@/hooks/useDocumentLock';
 import { DocumentLockBanner } from '@/components/version-control/DocumentLockBanner';
+import { useWatermark, WatermarkSettings } from '@/hooks/useWatermark';
 
 interface Document {
   id: string;
@@ -28,12 +29,15 @@ interface DocumentViewerProps {
   document: Document | null;
   isOpen: boolean;
   onClose: () => void;
+  /** Optional custom watermark settings for preview mode (overrides database lookup) */
+  customWatermark?: Partial<WatermarkSettings> | null;
 }
 
 export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   document,
   isOpen,
-  onClose
+  onClose,
+  customWatermark
 }) => {
   const [imageObjectUrl, setImageObjectUrl] = React.useState<string | null>(null);
   const [isLoadingImage, setIsLoadingImage] = React.useState(false);
@@ -43,6 +47,21 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [isOfflineDocument, setIsOfflineDocument] = React.useState(false);
   const docxContainerRef = React.useRef<HTMLDivElement>(null);
   const [isLoadingDocx, setIsLoadingDocx] = React.useState(false);
+
+  // Get watermarks for this document
+  const { watermarks } = useWatermark();
+  const documentWatermark = React.useMemo(() => {
+    // If custom watermark is provided (preview mode), use it
+    if (customWatermark) {
+      return customWatermark as WatermarkSettings;
+    }
+    if (!document?.id) return null;
+    // Find watermark linked to this document, or use default
+    const linkedWatermark = watermarks.find(w => w.document_id === document.id);
+    if (linkedWatermark) return linkedWatermark;
+    // Fall back to default watermark
+    return watermarks.find(w => w.is_default) || null;
+  }, [watermarks, document?.id, customWatermark]);
 
   // Use document lock hook
   const {
@@ -200,18 +219,18 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         console.log('🔄 Starting DOCX render from:', resolvedUrl);
         setIsLoadingDocx(true);
         const response = await fetch(resolvedUrl);
-        
+
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
-        
+
         const arrayBuffer = await response.arrayBuffer();
         console.log('📦 DOCX blob loaded, size:', arrayBuffer.byteLength);
-        
+
         if (docxContainerRef.current) {
           docxContainerRef.current.innerHTML = '';
           console.log('🎨 Rendering DOCX into container...');
-          
+
           await renderAsync(arrayBuffer, docxContainerRef.current, undefined, {
             className: 'docx-preview-content',
             inWrapper: true,
@@ -227,7 +246,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             renderEndnotes: true,
             useBase64URL: true,
           });
-          
+
           console.log('✅ DOCX rendered successfully, container HTML length:', docxContainerRef.current.innerHTML.length);
           console.log('📊 Container children count:', docxContainerRef.current.children.length);
         }
@@ -428,8 +447,81 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         )}
 
         <div className="flex-1 overflow-hidden flex">
-          {/* Main content area */}
-          <div className={`flex-1 overflow-hidden bg-gray-100 dark:bg-gray-900 ${showMetadata ? '' : ''}`}>
+          {/* Main content area with watermark overlay */}
+          <div className={`flex-1 overflow-hidden bg-gray-100 dark:bg-gray-900 relative ${showMetadata ? '' : ''}`}
+            style={{ position: 'relative' }}
+          >
+            {/* Watermark Overlay */}
+            {documentWatermark && (
+              <div
+                className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden"
+                style={{ zIndex: 10 }}
+              >
+                {documentWatermark.position === 'tile' ? (
+                  // Tiled watermark
+                  <div
+                    className="absolute inset-0"
+                    style={{
+                      background: `repeating-linear-gradient(
+                        ${documentWatermark.rotation}deg,
+                        transparent,
+                        transparent 150px,
+                        rgba(128,128,128,0.02) 150px,
+                        rgba(128,128,128,0.02) 300px
+                      )`
+                    }}
+                  >
+                    {Array.from({ length: 20 }).map((_, i) => (
+                      <div
+                        key={i}
+                        className="absolute whitespace-nowrap"
+                        style={{
+                          top: `${(i % 5) * 25}%`,
+                          left: `${Math.floor(i / 5) * 25}%`,
+                          transform: `rotate(${documentWatermark.rotation}deg)`,
+                          opacity: documentWatermark.opacity,
+                          color: documentWatermark.text_color,
+                          fontFamily: documentWatermark.font_family,
+                          fontSize: `${documentWatermark.font_size * 0.5}px`,
+                          fontWeight: 'bold',
+                          userSelect: 'none',
+                        }}
+                      >
+                        {documentWatermark.text_content}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  // Single position watermark
+                  <div
+                    className="text-center select-none"
+                    style={{
+                      transform: `rotate(${documentWatermark.rotation}deg)`,
+                      opacity: documentWatermark.opacity,
+                      color: documentWatermark.text_color,
+                      fontFamily: documentWatermark.font_family,
+                      fontSize: `${documentWatermark.font_size}px`,
+                      fontWeight: 'bold',
+                      textShadow: '2px 2px 4px rgba(0,0,0,0.1)',
+                      whiteSpace: 'nowrap',
+                      position: documentWatermark.position === 'center' ? 'relative' : 'absolute',
+                      ...(documentWatermark.position === 'top-left' && { top: '20px', left: '20px' }),
+                      ...(documentWatermark.position === 'top-right' && { top: '20px', right: '20px' }),
+                      ...(documentWatermark.position === 'bottom-left' && { bottom: '20px', left: '20px' }),
+                      ...(documentWatermark.position === 'bottom-right' && { bottom: '20px', right: '20px' }),
+                    }}
+                  >
+                    {documentWatermark.text_content}
+                    {documentWatermark.include_date && ` ${new Date().toLocaleDateString()}`}
+                  </div>
+                )}
+                {/* Watermark indicator badge */}
+                <div className="absolute top-2 right-2 bg-blue-500/80 text-white text-xs px-2 py-1 rounded flex items-center gap-1">
+                  <Droplets className="w-3 h-3" />
+                  Watermarked
+                </div>
+              </div>
+            )}
             {isLoadingUrl ? (
               <div className="flex items-center justify-center h-full">
                 <p className="text-muted-foreground">Loading document...</p>

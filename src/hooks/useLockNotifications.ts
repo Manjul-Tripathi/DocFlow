@@ -8,7 +8,7 @@ export interface LockNotification {
   document_id: string;
   lock_id: string;
   notified_user_id: string;
-  notification_type: 'lock_acquired' | 'lock_released' | 'lock_expired' | 'force_unlock' | 'ownership_transferred' | 'access_requested';
+  notification_type: 'lock_acquired' | 'lock_released' | 'lock_expired' | 'force_unlock' | 'ownership_transferred' | 'access_requested' | 'share_accessed';
   message: string | null;
   is_read: boolean;
   created_at: string;
@@ -93,7 +93,7 @@ export function useLockNotifications() {
       setNotifications(prev =>
         prev.map(n => ({ ...n, is_read: true }))
       );
-      
+
       // Force unread count to 0
       setUnreadCount(0);
 
@@ -177,11 +177,11 @@ export function useLockNotifications() {
           setNotifications(prev => [newNotification, ...prev]);
           setUnreadCount(prev => prev + 1);
 
-          // Show toast notification
-          if (newNotification.notification_type === 'access_requested') {
+          // Show toast notification for access-related notifications
+          if (newNotification.notification_type === 'access_requested' || newNotification.notification_type === 'share_accessed') {
             toast({
-              title: 'Access Request',
-              description: newNotification.message || 'Someone requested access to your locked document'
+              title: '🔔 Share Link Accessed',
+              description: newNotification.message || 'Someone accessed your shared link'
             });
           }
         }

@@ -52,10 +52,10 @@ class OAuthService {
           return;
         }
 
-        // Build OAuth URL
+        // Build OAuth URL - use drive.readonly for listing files
         const redirectUri = `${window.location.origin}/oauth-callback.html`;
         const scope = 'https://www.googleapis.com/auth/drive.readonly';
-        
+
         const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
         authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID);
         authUrl.searchParams.set('redirect_uri', redirectUri);
@@ -68,7 +68,7 @@ class OAuthService {
         const height = 600;
         const left = (window.screen.width - width) / 2;
         const top = (window.screen.height - height) / 2;
-        
+
         const popup = window.open(
           authUrl.toString(),
           'Google Sign In',
@@ -83,7 +83,7 @@ class OAuthService {
         // Listen for OAuth callback
         const handleMessage = (event: MessageEvent) => {
           if (event.origin !== window.location.origin) return;
-          
+
           if (event.data.type === 'oauth-success') {
             window.removeEventListener('message', handleMessage);
             resolve({
@@ -125,7 +125,7 @@ class OAuthService {
           const script = document.createElement('script');
           script.src = 'https://alcdn.msauth.net/browser/2.38.1/js/msal-browser.min.js';
           script.async = true;
-          
+
           await new Promise((res, rej) => {
             script.onload = res;
             script.onerror = rej;
@@ -134,7 +134,7 @@ class OAuthService {
         }
 
         const msal = (window as any).msal;
-        
+
         const msalConfig = {
           auth: {
             clientId: MICROSOFT_CLIENT_ID,
@@ -152,16 +152,16 @@ class OAuthService {
         };
 
         const response = await msalInstance.loginPopup(loginRequest);
-        
+
         resolve({
           success: true,
           provider: 'onedrive',
           accessToken: response.accessToken,
-          expiresIn: response.expiresOn ? 
+          expiresIn: response.expiresOn ?
             Math.floor((response.expiresOn.getTime() - Date.now()) / 1000) : 3600,
           scope: response.scopes?.join(' ')
         });
-        
+
       } catch (error: any) {
         if (error.errorCode === 'user_cancelled') {
           reject(new Error('Authentication cancelled'));

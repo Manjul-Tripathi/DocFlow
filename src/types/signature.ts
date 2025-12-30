@@ -51,11 +51,24 @@ export interface SignatureSigner {
   access_token: string;
   ip_address?: string;
   user_agent?: string;
+  signature_data_url?: string;
   signature_data?: Record<string, unknown>;
+  signature_position?: SignaturePosition;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   fields?: SignatureField[];
+}
+
+// Position data for click-to-place signatures
+export interface SignaturePosition {
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  xPercent: number;
+  yPercent: number;
 }
 
 export interface SignatureField {

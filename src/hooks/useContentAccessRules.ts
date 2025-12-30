@@ -205,9 +205,18 @@ export function useContentAccessRules() {
         }
       }
 
+      // Get matched count from applications table  
+      await new Promise(resolve => setTimeout(resolve, 600));
+      const { count } = await supabase
+        .from('content_rule_applications')
+        .select('*', { count: 'exact', head: true })
+        .eq('rule_id', newRule.id);
+
+      const matchedCount = count || 0;
+
       toast({
         title: "Rule created",
-        description: `Content access rule "${params.name}" created and applied to ${document_ids?.length || 0} document(s).`,
+        description: `Access rule "${params.name}" created successfully. Auto-matched ${matchedCount} document(s).`,
       });
 
       await fetchRules();
@@ -283,8 +292,39 @@ export function useContentAccessRules() {
   }, [toast, fetchRules]);
 
   const toggleRule = useCallback(async (ruleId: string, isActive: boolean) => {
-    await updateRule(ruleId, { is_active: isActive });
-  }, [updateRule]);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not authenticated');
+
+      const response = await fetch(`/api/rules/${ruleId}/toggle`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ is_active: isActive })
+      });
+
+      if (!response.ok) throw new Error('Failed to toggle rule');
+
+      const result = await response.json();
+
+      toast({
+        title: isActive ? "Rule Enabled" : "Rule Disabled",
+        description: result.message || (isActive
+          ? `Rule applied to ${result.matched_count || 0} document(s)`
+          : `Rule removed from ${result.removed_count || 0} document(s)`),
+      });
+
+      await fetchRules();
+    } catch (error: any) {
+      toast({
+        title: "Error toggling rule",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  }, [toast, fetchRules]);
 
   const reorderRules = useCallback(async (ruleIds: string[]) => {
     try {
@@ -301,7 +341,7 @@ export function useContentAccessRules() {
 
       let query = supabase
         .from('content_rule_applications')
-        .select('*, document:documents(file_name)')
+        .select('*')
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -313,14 +353,34 @@ export function useContentAccessRules() {
         query = query.eq('document_id', params.documentId) as any;
       }
 
-      const { data, error } = await (query as any);
+      const { data, error } = await query;
 
       console.log('[Rules] fetchApplications result:', data?.length, 'applications, error:', error);
 
       if (error) throw error;
-      setApplications(data || []);
+
+      // Manually fetch document info for each application
+      if (data && data.length > 0) {
+        const docIds = data.map(app => app.document_id).filter(Boolean);
+        const { data: docs } = await supabase
+          .from('documents')
+          .select('id, file_name')
+          .in('id', docIds);
+
+        // Join manually
+        const enrichedData = data.map(app => ({
+          ...app,
+          document: docs?.find(d => d.id === app.document_id)
+        }));
+
+        console.log('[Rules] Enriched with documents:', enrichedData);
+        setApplications(enrichedData as any);
+      } else {
+        setApplications([]);
+      }
     } catch (error) {
       console.error('Error fetching rule applications:', error);
+      setApplications([]);
     }
   }, []);
 

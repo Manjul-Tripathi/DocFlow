@@ -9,8 +9,11 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 import uuid
 import os
+import logging
 from app.core.auth import get_current_user
 from app.services.email import send_guest_invitation
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/shares", tags=["shares"])
 
@@ -142,22 +145,46 @@ async def create_share(
             raise HTTPException(status_code=500, detail="Failed to create share")
         
         created_share = response.data[0]
+        share_id = created_share['id']
         
         # Generate share URL
         share_url = f"{os.getenv('FRONTEND_URL', 'http://localhost:4173')}/guest/{invitation_token}"
         
-        # Send invitation email in background
-        background_tasks.add_task(
-            send_guest_invitation,
-            guest_email=request.guest_email,
-            guest_name=request.guest_name,
-            owner_name=current_user.user_metadata.get('full_name', 'A user'),
-            document_name=request.resource_name,
-            share_url=share_url,
-            permission=request.permission,
-            expires_at=expires_at,
-            message=request.message
-        )
+        # Send invitation email
+        print(f"📧 Sending email to {request.guest_email}")
+        logger.info(f"📧 Sending invitation email to {request.guest_email}")
+        
+        email_sent = False
+        try:
+            email_result = send_guest_invitation(
+                guest_email=request.guest_email,
+                guest_name=request.guest_name,
+                owner_name=current_user.user_metadata.get('full_name', 'A user'),
+                document_name=request.resource_name,
+                share_url=share_url,
+                permission=request.permission,
+                expires_at=expires_at,
+                message=request.message
+            )
+            email_sent = email_result
+            if email_result:
+                logger.info(f"✅ Email sent successfully to {request.guest_email}")
+            else:
+                logger.error(f"❌ Email sending returned False for {request.guest_email}")
+        except Exception as email_error:
+            logger.error(f"❌ Email sending failed: {email_error}")
+            print(f"❌ Email error: {email_error}")
+        
+        # Update share status based on email result
+        # 'accepted' = email sent successfully (invitation delivered)
+        # 'pending' = email failed (needs retry)
+        new_status = 'accepted' if email_sent else 'pending'
+        if new_status != 'pending':
+            supabase.table('external_shares').update({
+                'status': new_status,
+                'updated_at': datetime.utcnow().isoformat()
+            }).eq('id', share_id).execute()
+            created_share['status'] = new_status
         
         return ShareResponse(**created_share)
     
@@ -228,6 +255,204 @@ async def get_share_stats(current_user = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch stats: {str(e)}")
 
+
+# ============== Access Notification (must be before parameterized routes) ==============
+
+class AccessNotificationRequest(BaseModel):
+    share_id: str
+    resource_name: str
+    accessor_email: Optional[str] = "Anonymous"
+    accessed_at: Optional[str] = None
+    owner_id: Optional[str] = None  # For local share links, pass the owner's user ID
+
+
+@router.post("/notify-access")
+async def notify_access(request: AccessNotificationRequest):
+    """
+    Send access notification to share owner when someone accesses their shared document.
+    This is a public endpoint called by the guest page when notify_on_access is enabled.
+    """
+    try:
+        # Log access notification to console first (always works)
+        logger.info(f"📧 Access notification: {request.accessor_email} accessed '{request.resource_name}'")
+        print(f"\n{'='*60}")
+        print(f"📧 ACCESS NOTIFICATION")
+        print(f"{'='*60}")
+        print(f"   Document: {request.resource_name}")
+        print(f"   Accessed by: {request.accessor_email}")
+        print(f"   Time: {request.accessed_at or datetime.utcnow().isoformat()}")
+        print(f"   Share ID: {request.share_id}")
+        print(f"{'='*60}\n")
+        
+        supabase = get_supabase_client()
+        owner_id = None
+        
+        # Check if this is a local share link (starts with 'link-')
+        if request.share_id.startswith('link-'):
+            # For local share links, use owner_id from request if provided
+            if request.owner_id:
+                owner_id = request.owner_id
+                print(f"Local share link detected - using provided owner_id: {owner_id}")
+            else:
+                print("Local share link detected - no owner_id provided, notification logged to console only")
+        else:
+            # Get share details from database
+            try:
+                share_response = supabase.table('external_shares')\
+                    .select('owner_id, resource_id, resource_name, notify_on_access, notify_on_view')\
+                    .eq('id', request.share_id)\
+                    .single()\
+                    .execute()
+                
+                if share_response.data:
+                    share = share_response.data
+                    owner_id = share.get('owner_id')
+                    
+                    # Check if notification is enabled in DB
+                    if not share.get('notify_on_access') and not share.get('notify_on_view'):
+                        return {"status": "skipped", "message": "Notifications not enabled for this share"}
+            except Exception as e:
+                print(f"Could not fetch share from DB: {e}")
+        
+        # If we have an owner_id, insert notification into lock_notifications table
+        if owner_id:
+            try:
+                notification_message = f"{request.accessor_email} accessed your shared link for \"{request.resource_name}\""
+                
+                # Generate a proper UUID for document_id and lock_id (they are required UUID fields)
+                notification_uuid = str(uuid.uuid4())
+                
+                notification_data = {
+                    "document_id": notification_uuid,  # Use generated UUID
+                    "lock_id": notification_uuid,  # Use generated UUID
+                    "notified_user_id": owner_id,
+                    "notification_type": "access_requested",  # Using existing type
+                    "message": notification_message,
+                    "is_read": False
+                }
+                
+                result = supabase.table('lock_notifications').insert(notification_data).execute()
+                
+                if result.data:
+                    print(f"✅ Notification inserted into lock_notifications table for user {owner_id}")
+                else:
+                    print(f"⚠️ Failed to insert notification: no data returned")
+            except Exception as e:
+                print(f"❌ Failed to insert notification: {e}")
+                # Continue - don't fail the whole request
+        
+        # Skip email notification for now (profiles table doesn't exist)
+        # Just return success after inserting the bell icon notification
+        
+        return {"status": "logged", "message": "Notification saved to bell icon" if owner_id else "Notification logged to console"}
+    
+    except Exception as e:
+        logger.error(f"Failed to send access notification: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+# ============== Public Access Logging (for device tracking) ==============
+
+class LogAccessPublicRequest(BaseModel):
+    share_id: str
+    device_type: str  # 'Desktop', 'Mobile', 'Tablet'
+    action: str = "view"  # 'view', 'download', 'print'
+    accessor_email: Optional[str] = None
+
+
+# In-memory storage for access logs (for local share links)
+# In production, this would be in Redis or a database
+_access_logs_cache: dict = {}
+
+
+@router.post("/log-access-public")
+async def log_access_public(request: LogAccessPublicRequest):
+    """
+    Public endpoint to log access with device type.
+    This allows mobile devices to report their device type back to the server.
+    """
+    try:
+        print(f"📊 Access log: {request.device_type} - {request.action} - Share: {request.share_id}")
+        
+        # Store in memory cache (keyed by share_id)
+        if request.share_id not in _access_logs_cache:
+            _access_logs_cache[request.share_id] = []
+        
+        log_entry = {
+            "id": str(uuid.uuid4()),
+            "device_type": request.device_type,
+            "action": request.action,
+            "accessor_email": request.accessor_email or "Anonymous",
+            "accessed_at": datetime.utcnow().isoformat()
+        }
+        
+        _access_logs_cache[request.share_id].append(log_entry)
+        
+        # Keep only last 50 logs per share
+        _access_logs_cache[request.share_id] = _access_logs_cache[request.share_id][-50:]
+        
+        # Calculate current stats
+        logs = _access_logs_cache[request.share_id]
+        total_views = len([l for l in logs if l.get("action") == "view"])
+        downloads = len([l for l in logs if l.get("action") == "download"])
+        
+        return {
+            "status": "logged", 
+            "log_id": log_entry["id"],
+            "total_views": total_views,
+            "downloads": downloads
+        }
+    
+    except Exception as e:
+        print(f"Error logging access: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@router.get("/access-logs-public/{share_id}")
+async def get_access_logs_public(share_id: str):
+    """
+    Get access logs for a share link (public endpoint for local shares).
+    Returns device breakdown, recent access history, and view counts.
+    """
+    try:
+        logs = _access_logs_cache.get(share_id, [])
+        
+        # Calculate device breakdown
+        device_breakdown = {"Desktop": 0, "Mobile": 0, "Tablet": 0}
+        for log in logs:
+            device = log.get("device_type", "Desktop")
+            if device in device_breakdown:
+                device_breakdown[device] += 1
+            else:
+                device_breakdown["Desktop"] += 1
+        
+        # Calculate view counts
+        total_views = len([l for l in logs if l.get("action") == "view"])
+        downloads = len([l for l in logs if l.get("action") == "download"])
+        unique_visitors = len(set(l.get("accessor_email", "Anonymous") for l in logs))
+        
+        return {
+            "logs": logs[-20:],  # Return last 20 logs
+            "device_breakdown": device_breakdown,
+            "total_accesses": len(logs),
+            "total_views": total_views,
+            "downloads": downloads,
+            "unique_visitors": unique_visitors
+        }
+    
+    except Exception as e:
+        print(f"Error getting access logs: {e}")
+        return {
+            "logs": [], 
+            "device_breakdown": {"Desktop": 0, "Mobile": 0, "Tablet": 0}, 
+            "total_accesses": 0,
+            "total_views": 0,
+            "downloads": 0,
+            "unique_visitors": 0
+        }
+
+
+# ============== Parameterized Share Routes ==============
 
 @router.post("/{share_id}/revoke")
 async def revoke_share(
@@ -532,3 +757,4 @@ async def log_guest_access(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to log access: {str(e)}")
+

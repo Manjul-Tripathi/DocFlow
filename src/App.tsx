@@ -34,6 +34,7 @@ import RunApplication from "./pages/RunApplication";
 import Settings from "./pages/Settings";
 import BulkTest from "./pages/BulkTest";
 import EditorWrapper from "@/components/modern-editor/EditorWrapper";
+import { SigningPage } from "./pages/SigningPage";
 
 // Configure React Query client
 const queryClient = new QueryClient({
@@ -166,6 +167,9 @@ const App = () => (
                     <EditorWrapper />
                   </ProtectedRoute>
                 } />
+
+                {/* E-Signature public signing route */}
+                <Route path="/sign/:token" element={<SigningPage />} />
 
                 {/* Protected routes */}
                 {protectedRoutes.map(({ path, element }) => (

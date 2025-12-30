@@ -1,6 +1,6 @@
 // ============= Enhanced Link Sharing Types =============
 
-export type ShareLinkPermission = 'view' | 'comment' | 'download' | 'edit';
+export type ShareLinkPermission = 'view' | 'download' | 'edit';
 
 export interface EnhancedShareLink {
   id: string;
@@ -100,6 +100,7 @@ export interface CreateShareLinkParams {
   require_name?: boolean;
   allowed_emails?: string[];
   allowed_domains?: string[];
+  blocked_emails?: string[];
 
   // Limits
   max_uses?: number;
@@ -123,23 +124,17 @@ export const SHARE_LINK_PERMISSION_INFO: Record<ShareLinkPermission, {
     icon: 'Eye',
     color: 'hsl(var(--chart-1))'
   },
-  comment: {
-    label: 'Can Comment',
-    description: 'Can view and add comments',
-    icon: 'MessageSquare',
-    color: 'hsl(var(--chart-2))'
-  },
   download: {
     label: 'Can Download',
     description: 'Can view and download a copy',
     icon: 'Download',
-    color: 'hsl(var(--chart-3))'
+    color: 'hsl(var(--chart-2))'
   },
   edit: {
     label: 'Can Edit',
     description: 'Can make changes to the document',
     icon: 'Edit',
-    color: 'hsl(var(--chart-4))'
+    color: 'hsl(var(--chart-3))'
   }
 };
 

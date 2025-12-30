@@ -55,7 +55,7 @@ export function ExternalSharingPanel({ documents }: ExternalSharingPanelProps) {
     getShareUrl,
     getShareStats,
   } = useExternalSharing();
-  
+
   const { stats, loading: statsLoading } = useShareStats();
   const { toast } = useToast();
 
@@ -123,8 +123,6 @@ export function ExternalSharingPanel({ documents }: ExternalSharingPanelProps) {
     switch (permission) {
       case 'view':
         return <Eye className="h-4 w-4" />;
-      case 'comment':
-        return <Mail className="h-4 w-4" />;
       case 'download':
         return <Download className="h-4 w-4" />;
       case 'edit':
@@ -421,7 +419,6 @@ export function ExternalSharingPanel({ documents }: ExternalSharingPanelProps) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="view">👁️ View Only</SelectItem>
-                    <SelectItem value="comment">💬 Can Comment</SelectItem>
                     <SelectItem value="download">⬇️ Can Download</SelectItem>
                     <SelectItem value="edit">✏️ Can Edit</SelectItem>
                   </SelectContent>

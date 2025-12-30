@@ -176,6 +176,7 @@ export const isShareLinkValid = (link: EnhancedShareLink): { valid: boolean; rea
 // Get analytics for a link
 export const getShareLinkAnalytics = (link: EnhancedShareLink) => {
     const uniqueVisitors = (link.unique_visitor_ids || []).length;
+    const accessLogs = getAccessLogsForLink(link.id);
 
     return {
         total_views: link.use_count || 0,
@@ -189,6 +190,89 @@ export const getShareLinkAnalytics = (link: EnhancedShareLink) => {
             { device: 'Mobile', views: Math.floor((link.use_count || 0) * 0.3) },
             { device: 'Tablet', views: Math.floor((link.use_count || 0) * 0.1) }
         ],
-        recent_accesses: []
+        recent_accesses: accessLogs
     };
+};
+
+// ============= Access Log Storage =============
+
+const ACCESS_LOGS_KEY = 'share_links_access_logs';
+
+export interface AccessLogEntry {
+    id: string;
+    link_id: string;
+    accessed_at: string;
+    accessor_email?: string;
+    action: 'view' | 'download' | 'print';
+    device_type?: string;
+    user_agent?: string;
+}
+
+// Load access logs from localStorage
+export const loadAccessLogs = (): AccessLogEntry[] => {
+    try {
+        const stored = localStorage.getItem(ACCESS_LOGS_KEY);
+        return stored ? JSON.parse(stored) : [];
+    } catch {
+        return [];
+    }
+};
+
+// Save access logs to localStorage
+export const saveAccessLogs = (logs: AccessLogEntry[]) => {
+    try {
+        // Keep only last 100 logs to avoid storage bloat
+        const trimmedLogs = logs.slice(-100);
+        localStorage.setItem(ACCESS_LOGS_KEY, JSON.stringify(trimmedLogs));
+    } catch (e) {
+        console.warn('Failed to save access logs:', e);
+    }
+};
+
+// Add a new access log entry
+export const logAccess = (linkId: string, accessorEmail?: string, action: 'view' | 'download' | 'print' = 'view'): void => {
+    try {
+        const logs = loadAccessLogs();
+        const newLog: AccessLogEntry = {
+            id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            link_id: linkId,
+            accessed_at: new Date().toISOString(),
+            accessor_email: accessorEmail,
+            action,
+            device_type: detectDeviceType(),
+            user_agent: navigator.userAgent
+        };
+        logs.push(newLog);
+        saveAccessLogs(logs);
+    } catch (err) {
+        console.error('Failed to log access:', err);
+    }
+};
+
+// Get access logs for a specific link
+export const getAccessLogsForLink = (linkId: string): AccessLogEntry[] => {
+    const logs = loadAccessLogs();
+    return logs
+        .filter(log => log.link_id === linkId)
+        .sort((a, b) => new Date(b.accessed_at).getTime() - new Date(a.accessed_at).getTime());
+};
+
+// Detect device type from user agent
+const detectDeviceType = (): string => {
+    if (typeof navigator === 'undefined') return 'Desktop';
+
+    const ua = navigator.userAgent;
+
+    // Check for tablets first (more specific patterns)
+    if (/iPad|Android(?!.*Mobile)|PlayBook|Tablet/i.test(ua)) {
+        return 'Tablet';
+    }
+
+    // Check for mobile devices
+    if (/Mobile|iPhone|iPod|Android.*Mobile|BlackBerry|IEMobile|Opera Mini|Opera Mobi|Windows Phone/i.test(ua)) {
+        return 'Mobile';
+    }
+
+    // Default to Desktop
+    return 'Desktop';
 };

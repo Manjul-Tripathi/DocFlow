@@ -4,13 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  Cloud, 
-  HardDrive, 
-  Database, 
-  Play, 
-  Pause, 
-  Square, 
+import {
+  Cloud,
+  HardDrive,
+  Database,
+  Play,
+  Pause,
+  Square,
   RotateCcw,
   Plus,
   Settings,
@@ -36,7 +36,7 @@ import type { MigrationJob, SourceSystem } from '@/types/migration';
 export function MigrationDashboard() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [activeTab, setActiveTab] = useState('jobs');
-  
+
   const {
     jobs,
     jobItems,
@@ -178,9 +178,9 @@ export function MigrationDashboard() {
                     <div className="text-center py-8 text-muted-foreground">
                       <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
                       <p>No migration jobs yet</p>
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
+                      <Button
+                        variant="outline"
+                        size="sm"
                         className="mt-2"
                         onClick={() => setShowCreateDialog(true)}
                       >
@@ -217,14 +217,14 @@ export function MigrationDashboard() {
                         <div>
                           <CardTitle>{selectedJob.name}</CardTitle>
                           <CardDescription>
-                            {selectedJob.source_system.replace('_', ' ')} → SimplifyDrive
+                            {selectedJob.source_system?.replace('_', ' ') || 'Unknown'} → SimplifyDrive
                           </CardDescription>
                         </div>
                       </div>
                       <div className="flex gap-2">
                         {selectedJob.status === 'failed' && (
-                          <Button 
-                            variant="outline" 
+                          <Button
+                            variant="outline"
                             size="sm"
                             onClick={() => retryFailed(selectedJob.id)}
                           >
@@ -236,8 +236,8 @@ export function MigrationDashboard() {
                     </div>
                   </CardHeader>
                   <CardContent>
-                    <MigrationItemsList 
-                      items={jobItems} 
+                    <MigrationItemsList
+                      items={jobItems}
                       isLoading={itemsLoading}
                       job={selectedJob}
                     />
@@ -256,7 +256,7 @@ export function MigrationDashboard() {
         </TabsContent>
 
         <TabsContent value="metrics">
-          <MigrationMetricsPanel 
+          <MigrationMetricsPanel
             job={selectedJob}
             metrics={metrics}
             auditLogs={auditLogs}
@@ -272,7 +272,7 @@ export function MigrationDashboard() {
         </TabsContent>
       </Tabs>
 
-      <CreateMigrationDialog 
+      <CreateMigrationDialog
         open={showCreateDialog}
         onOpenChange={setShowCreateDialog}
         onSubmit={createJob}

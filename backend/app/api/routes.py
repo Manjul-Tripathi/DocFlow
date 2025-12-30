@@ -1235,6 +1235,21 @@ async def permanent_delete_document(document_id: str):
         
         storage_path = doc_response.data[0].get('storage_path')
         
+        # Delete related records first to avoid foreign key constraints
+        try:
+            # Delete custom metadata
+            supabase.table('document_custom_metadata').delete().eq('document_id', document_id).execute()
+            logger.info(f"🧹 Deleted custom metadata for document {document_id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete custom metadata (may not exist): {e}")
+        
+        try:
+            # Delete document shortcuts (folder assignments)
+            supabase.table('document_shortcuts').delete().eq('document_id', document_id).execute()
+            logger.info(f"🧹 Deleted shortcuts for document {document_id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete shortcuts (may not exist): {e}")
+        
         # Delete from storage if path exists
         if storage_path:
             try:
@@ -1245,9 +1260,6 @@ async def permanent_delete_document(document_id: str):
         
         # Delete from database
         response = supabase.table('documents').delete().eq('id', document_id).execute()
-        
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Document not found")
         
         logger.info(f"✅ Document {document_id} permanently deleted")
         

@@ -109,7 +109,6 @@ export const ShareLinksDashboard: React.FC<ShareLinksDashboardProps> = ({
   const getPermissionIcon = (perm: ShareLinkPermission) => {
     switch (perm) {
       case 'view': return <Eye className="w-4 h-4" />;
-      case 'comment': return <MessageSquare className="w-4 h-4" />;
       case 'download': return <Download className="w-4 h-4" />;
       case 'edit': return <Edit className="w-4 h-4" />;
     }

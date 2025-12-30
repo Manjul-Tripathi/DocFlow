@@ -56,6 +56,8 @@ export function ExternalSharingPanel({ documents }: ExternalSharingPanelProps) {
 
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [selectedShare, setSelectedShare] = useState<ExternalShare | null>(null);
+  const [guestEmails, setGuestEmails] = useState<string[]>([]);
+  const [newEmailInput, setNewEmailInput] = useState('');
   const [formData, setFormData] = useState<CreateExternalShareParams>({
     resource_type: 'document',
     resource_id: '',
@@ -71,25 +73,72 @@ export function ExternalSharingPanel({ documents }: ExternalSharingPanelProps) {
 
   const stats = getShareStats();
 
-  const handleInvite = async () => {
-    if (!formData.guest_email || !formData.resource_id) return;
+  // Add email to list
+  const addEmail = () => {
+    const email = newEmailInput.trim();
+    if (email && /\S+@\S+\.\S+/.test(email) && !guestEmails.includes(email)) {
+      setGuestEmails(prev => [...prev, email]);
+      setNewEmailInput('');
+    }
+  };
 
-    const share = await createShare(formData);
-    if (share) {
-      setShowInviteDialog(false);
-      setFormData({
-        resource_type: 'document',
-        resource_id: '',
-        resource_name: '',
-        guest_email: '',
-        guest_name: '',
-        permission: 'view',
-        allow_download: true,
-        allow_print: true,
-        expires_in_days: 7,
-        message: '',
+  // Remove email from list
+  const removeEmail = (emailToRemove: string) => {
+    setGuestEmails(prev => prev.filter(e => e !== emailToRemove));
+  };
+
+  // Handle Enter key to add email
+  const handleEmailKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addEmail();
+    }
+  };
+
+  const handleInvite = async () => {
+    if (guestEmails.length === 0 || !formData.resource_id) return;
+
+    let successCount = 0;
+    let failCount = 0;
+
+    // Send invitations to all emails
+    for (const email of guestEmails) {
+      const shareParams = {
+        ...formData,
+        guest_email: email,
+      };
+      const share = await createShare(shareParams);
+      if (share) {
+        successCount++;
+      } else {
+        failCount++;
+      }
+    }
+
+    // Show result toast
+    if (successCount > 0) {
+      toast({
+        title: `✅ ${successCount} invitation${successCount > 1 ? 's' : ''} sent`,
+        description: failCount > 0 ? `${failCount} failed to send` : undefined,
       });
     }
+
+    // Reset form
+    setShowInviteDialog(false);
+    setGuestEmails([]);
+    setNewEmailInput('');
+    setFormData({
+      resource_type: 'document',
+      resource_id: '',
+      resource_name: '',
+      guest_email: '',
+      guest_name: '',
+      permission: 'view',
+      allow_download: true,
+      allow_print: true,
+      expires_in_days: 7,
+      message: '',
+    });
   };
 
   const copyShareLink = async (share: ExternalShare) => {
@@ -122,8 +171,6 @@ export function ExternalSharingPanel({ documents }: ExternalSharingPanelProps) {
         return <Eye className="h-3 w-3" />;
       case 'download':
         return <Download className="h-3 w-3" />;
-      case 'comment':
-        return <Activity className="h-3 w-3" />;
       case 'edit':
         return <Globe className="h-3 w-3" />;
       default:
@@ -303,23 +350,49 @@ export function ExternalSharingPanel({ documents }: ExternalSharingPanelProps) {
               </Select>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            {/* Multi-email input */}
+            <div className="space-y-2">
+              <Label>Guest Emails *</Label>
               <div className="space-y-2">
-                <Label>Guest Email *</Label>
-                <Input
-                  type="email"
-                  value={formData.guest_email}
-                  onChange={e => setFormData(prev => ({ ...prev, guest_email: e.target.value }))}
-                  placeholder="guest@example.com"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Guest Name</Label>
-                <Input
-                  value={formData.guest_name || ''}
-                  onChange={e => setFormData(prev => ({ ...prev, guest_name: e.target.value }))}
-                  placeholder="John Doe"
-                />
+                {/* Added emails as badges */}
+                {guestEmails.length > 0 && (
+                  <div className="flex flex-wrap gap-2 p-2 border rounded-md bg-muted/30">
+                    {guestEmails.map(email => (
+                      <Badge key={email} variant="secondary" className="gap-1 pr-1">
+                        {email}
+                        <button
+                          type="button"
+                          onClick={() => removeEmail(email)}
+                          className="ml-1 rounded-full hover:bg-muted p-0.5"
+                        >
+                          <XCircle className="h-3 w-3" />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                {/* Input for adding new emails */}
+                <div className="flex gap-2">
+                  <Input
+                    type="email"
+                    value={newEmailInput}
+                    onChange={e => setNewEmailInput(e.target.value)}
+                    onKeyDown={handleEmailKeyDown}
+                    placeholder="guest@example.com (press Enter to add)"
+                    className="flex-1"
+                  />
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={addEmail}
+                    disabled={!newEmailInput.trim() || !/\S+@\S+\.\S+/.test(newEmailInput)}
+                  >
+                    Add
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {guestEmails.length} recipient{guestEmails.length !== 1 ? 's' : ''} added • Press Enter or comma to add
+                </p>
               </div>
             </div>
 
@@ -328,14 +401,21 @@ export function ExternalSharingPanel({ documents }: ExternalSharingPanelProps) {
                 <Label>Permission Level</Label>
                 <Select
                   value={formData.permission}
-                  onValueChange={v => setFormData(prev => ({ ...prev, permission: v as any }))}
+                  onValueChange={v => {
+                    const newPermission = v as 'view' | 'download' | 'edit';
+                    setFormData(prev => ({
+                      ...prev,
+                      permission: newPermission,
+                      // Sync allow_download with permission
+                      allow_download: newPermission === 'download' || newPermission === 'edit'
+                    }));
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="view">View Only</SelectItem>
-                    <SelectItem value="comment">Can Comment</SelectItem>
                     <SelectItem value="download">Can Download</SelectItem>
                     <SelectItem value="edit">Can Edit</SelectItem>
                   </SelectContent>
@@ -366,12 +446,19 @@ export function ExternalSharingPanel({ documents }: ExternalSharingPanelProps) {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
-                  <Label>Allow Download</Label>
-                  <p className="text-xs text-muted-foreground">Guest can download the file</p>
+                  <Label className={formData.permission === 'view' ? 'text-muted-foreground' : ''}>
+                    Allow Download
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    {formData.permission === 'view'
+                      ? 'Disabled for View Only permission'
+                      : 'Guest can download the file'}
+                  </p>
                 </div>
                 <Switch
                   checked={formData.allow_download}
                   onCheckedChange={checked => setFormData(prev => ({ ...prev, allow_download: checked }))}
+                  disabled={formData.permission === 'view'}
                 />
               </div>
               <div className="flex items-center justify-between">
@@ -402,11 +489,11 @@ export function ExternalSharingPanel({ documents }: ExternalSharingPanelProps) {
             </Button>
             <Button
               onClick={handleInvite}
-              disabled={!formData.guest_email || !formData.resource_id}
+              disabled={guestEmails.length === 0 || !formData.resource_id}
               className="gap-2"
             >
               <Send className="h-4 w-4" />
-              Send Invitation
+              Send {guestEmails.length > 1 ? `${guestEmails.length} Invitations` : 'Invitation'}
             </Button>
           </DialogFooter>
         </DialogContent>

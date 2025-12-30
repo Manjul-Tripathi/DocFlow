@@ -241,6 +241,218 @@ export function useWatermark() {
     ctx.restore();
   }, []);
 
+  // Download document with watermark overlay applied
+  const downloadDocumentWithWatermark = useCallback(async (
+    documentId: string,
+    settings: WatermarkSettings,
+    fileName?: string
+  ) => {
+    try {
+      toast({
+        title: 'Preparing download...',
+        description: 'Applying watermark to document',
+      });
+
+      // Fetch document details
+      const { data: doc, error: docError } = await supabase
+        .from('documents')
+        .select('file_name, storage_path, file_type, original_url')
+        .eq('id', documentId)
+        .single();
+
+      if (docError || !doc) {
+        console.error('Document fetch error:', docError);
+        throw new Error('Document not found');
+      }
+
+      console.log('Document data:', doc);
+
+      // Get document URL - try storage_path first with signed URL, then original_url
+      let documentUrl: string | null = null;
+
+      if (doc.storage_path) {
+        const { data: signedData, error: signedError } = await supabase.storage
+          .from('documents')
+          .createSignedUrl(doc.storage_path, 3600);
+
+        if (!signedError && signedData?.signedUrl) {
+          documentUrl = signedData.signedUrl;
+        } else {
+          console.error('Signed URL error:', signedError);
+        }
+      }
+
+      // Fallback to original_url
+      if (!documentUrl && doc.original_url) {
+        documentUrl = doc.original_url;
+      }
+
+      if (!documentUrl) {
+        throw new Error('Could not get document URL - no storage_path or original_url found');
+      }
+
+      console.log('Document URL:', documentUrl);
+
+      // Determine file type
+      const fileType = doc.file_type?.toLowerCase() || '';
+      const fileName = doc.file_name?.toLowerCase() || '';
+      const isImage = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'].includes(fileType) ||
+        fileName.match(/\.(png|jpg|jpeg|gif|webp)$/i);
+      const isPdf = fileType === 'application/pdf' || fileName.endsWith('.pdf');
+
+      console.log('File type:', fileType, 'isImage:', isImage, 'isPdf:', isPdf);
+
+      // Handle PDF via backend API
+      if (isPdf) {
+        toast({
+          title: 'Applying watermark to PDF...',
+          description: 'This may take a moment for large files.',
+        });
+
+        // Call backend API for PDF watermarking
+        const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const response = await fetch(`${backendUrl}/api/watermarks/apply`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            document_id: documentId,
+            watermark_text: settings.text_content || 'CONFIDENTIAL',
+            font_family: settings.font_family || 'Helvetica',
+            font_size: settings.font_size || 48,
+            rotation: settings.rotation || -45,
+            opacity: settings.opacity || 0.3,
+            color: settings.text_color?.slice(0, 7) || '#000000',
+            position: settings.position || 'center',
+            save_to_documents: true,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Failed to watermark PDF: ${errorText}`);
+        }
+
+        // Parse JSON response - document is saved to storage
+        const result = await response.json();
+
+        if (result.success) {
+          toast({
+            title: 'Watermark Applied! ✓',
+            description: `"${result.file_name}" has been saved to your Documents.`,
+          });
+        } else {
+          throw new Error('Failed to save watermarked document');
+        }
+
+        return;
+      }
+
+      // Check if it's a supported image type
+      if (!isImage) {
+        toast({
+          title: 'Unsupported file type',
+          description: 'Watermark download works with images (PNG, JPG) and PDFs.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Create canvas and apply watermark
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Could not create canvas context');
+      }
+
+      // Fetch image as blob to avoid CORS issues
+      console.log('Fetching document from:', documentUrl);
+      const response = await fetch(documentUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch document: ${response.status} ${response.statusText}`);
+      }
+
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+
+      // Load the image from blob URL
+      const img = new Image();
+
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => {
+          // Set canvas size to image size
+          canvas.width = img.width;
+          canvas.height = img.height;
+
+          // Draw the original image
+          ctx.drawImage(img, 0, 0);
+
+          // Get current user for username watermark
+          supabase.auth.getUser().then(({ data: userData }) => {
+            const username = userData?.user?.email?.split('@')[0] || 'User';
+
+            // Apply watermark
+            applyWatermarkToCanvas(ctx, canvas, settings, username);
+            URL.revokeObjectURL(blobUrl); // Clean up
+            resolve();
+          }).catch(() => {
+            applyWatermarkToCanvas(ctx, canvas, settings, 'User');
+            URL.revokeObjectURL(blobUrl); // Clean up
+            resolve();
+          });
+        };
+        img.onerror = (e) => {
+          console.error('Image load error:', e);
+          URL.revokeObjectURL(blobUrl);
+          reject(new Error('Failed to load document image'));
+        };
+        img.src = blobUrl;
+      });
+
+      // Convert canvas to blob and download
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          toast({
+            title: 'Error',
+            description: 'Failed to create watermarked image',
+            variant: 'destructive',
+          });
+          return;
+        }
+
+        // Create download link
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+
+        // Generate filename
+        const baseName = fileName || doc.file_name || 'document';
+        const ext = baseName.match(/\.([^.]+)$/)?.[1] || 'png';
+        const nameWithoutExt = baseName.replace(/\.[^.]+$/, '');
+        link.download = `${nameWithoutExt}_watermarked.${ext}`;
+
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        toast({
+          title: 'Download complete',
+          description: 'Document with watermark has been downloaded',
+        });
+      }, isImage ? 'image/png' : 'image/png', 0.95);
+
+    } catch (error) {
+      console.error('Error downloading with watermark:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to download with watermark',
+        variant: 'destructive',
+      });
+    }
+  }, [applyWatermarkToCanvas, toast]);
+
   return {
     watermarks,
     defaultWatermark,
@@ -249,6 +461,7 @@ export function useWatermark() {
     updateWatermark,
     deleteWatermark,
     applyWatermarkToCanvas,
+    downloadDocumentWithWatermark,
     refetch: fetchWatermarks,
   };
 }

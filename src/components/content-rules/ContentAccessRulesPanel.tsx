@@ -81,9 +81,9 @@ export function ContentAccessRulesPanel() {
 
   const handleCreate = async () => {
     if (!formData.name.trim()) return;
-    if (selectedDocIds.length === 0) return;
+    // No longer require document selection - criteria-based matching only
 
-    await createRule({ ...formData, document_ids: selectedDocIds });
+    await createRule(formData);
     setShowCreateDialog(false);
     resetForm();
   };
@@ -377,25 +377,16 @@ export function ContentAccessRulesPanel() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4">
-            {/* Step 1: Select Documents */}
-            <div className="space-y-2">
-              <Label className="text-base font-semibold">Step 1: Select Documents *</Label>
-              <p className="text-sm text-muted-foreground">Choose documents to apply this rule to.</p>
-              <DocumentSelector
-                selectedIds={selectedDocIds}
-                onSelectionChange={setSelectedDocIds}
-                maxHeight="200px"
-              />
-              {selectedDocIds.length === 0 && (
-                <p className="text-xs text-destructive">Please select at least one document.</p>
-              )}
+            {/* Info Alert */}
+            <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+              <p className="text-sm text-blue-900 dark:text-blue-100">
+                ℹ️ <strong>Automatic Matching:</strong> This rule will automatically scan and match documents based on the criteria you define below.
+              </p>
             </div>
 
-            <Separator />
-
-            {/* Step 2: Basic Info */}
+            {/* Step 1: Basic Info */}
             <div className="space-y-4">
-              <Label className="text-base font-semibold">Step 2: Rule Details</Label>
+              <Label className="text-base font-semibold">Step 1: Rule Details</Label>
               <div className="space-y-2">
                 <Label>Rule Name *</Label>
                 <Input
@@ -425,39 +416,43 @@ export function ContentAccessRulesPanel() {
                   {/* File Types */}
                   <div className="space-y-2">
                     <Label>File Types</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        value={fileTypeInput}
-                        onChange={e => setFileTypeInput(e.target.value)}
-                        placeholder="e.g., pdf, docx, xlsx"
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            addToArray('file_types', fileTypeInput);
-                            setFileTypeInput('');
-                          }
-                        }}
-                      />
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          addToArray('file_types', fileTypeInput);
-                          setFileTypeInput('');
-                        }}
-                      >
-                        Add
-                      </Button>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {formData.file_types?.map((type, i) => (
-                        <Badge key={i} variant="secondary" className="gap-1">
-                          {type}
-                          <button onClick={() => removeFromArray('file_types', i)}>
-                            <XCircle className="h-3 w-3" />
-                          </button>
-                        </Badge>
+                    <p className="text-xs text-muted-foreground">Select document types to match</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['pdf', 'docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'txt', 'csv', 'jpg', 'png', 'zip'].map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => {
+                            if (formData.file_types?.includes(type)) {
+                              setFormData(prev => ({
+                                ...prev,
+                                file_types: prev.file_types?.filter(t => t !== type)
+                              }));
+                            } else {
+                              addToArray('file_types', type);
+                            }
+                          }}
+                          className={`px-3 py-2 text-sm border rounded-md transition-colors ${formData.file_types?.includes(type)
+                              ? 'bg-primary text-primary-foreground border-primary'
+                              : 'bg-background hover:bg-muted border-input'
+                            }`}
+                        >
+                          .{type}
+                        </button>
                       ))}
                     </div>
+                    {formData.file_types && formData.file_types.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {formData.file_types.map((type, i) => (
+                          <Badge key={i} variant="secondary" className="gap-1">
+                            .{type}
+                            <button onClick={() => removeFromArray('file_types', i)}>
+                              <XCircle className="h-3 w-3" />
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Name Patterns */}
@@ -644,7 +639,7 @@ export function ContentAccessRulesPanel() {
             </Button>
             <Button
               onClick={editingRule ? handleUpdate : handleCreate}
-              disabled={!formData.name.trim() || (!editingRule && selectedDocIds.length === 0)}
+              disabled={!formData.name.trim()}
             >
               {editingRule ? 'Update Rule' : 'Create Rule'}
             </Button>

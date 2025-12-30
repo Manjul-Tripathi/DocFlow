@@ -1,33 +1,33 @@
 export type SourceSystem = 'google_drive' | 'onedrive' | 'filenet';
 
-export type MigrationJobStatus = 
-  | 'pending' 
-  | 'discovering' 
-  | 'running' 
-  | 'paused' 
-  | 'completed' 
-  | 'failed' 
+export type MigrationJobStatus =
+  | 'pending'
+  | 'discovering'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'failed'
   | 'cancelled';
 
-export type MigrationItemStatus = 
-  | 'pending' 
-  | 'discovered' 
-  | 'downloading' 
-  | 'uploading' 
-  | 'indexing' 
-  | 'applying_permissions' 
-  | 'verifying' 
-  | 'completed' 
-  | 'failed' 
+export type MigrationItemStatus =
+  | 'pending'
+  | 'discovered'
+  | 'downloading'
+  | 'uploading'
+  | 'indexing'
+  | 'applying_permissions'
+  | 'verifying'
+  | 'completed'
+  | 'failed'
   | 'skipped';
 
-export type MigrationStage = 
-  | 'discovery' 
-  | 'pre_check' 
-  | 'transfer' 
-  | 'index' 
-  | 'acl_apply' 
-  | 'verify' 
+export type MigrationStage =
+  | 'discovery'
+  | 'pre_check'
+  | 'transfer'
+  | 'index'
+  | 'acl_apply'
+  | 'verify'
   | 'finalize';
 
 export interface MigrationJob {

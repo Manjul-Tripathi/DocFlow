@@ -120,8 +120,8 @@ export const QuickShareDialog: React.FC<QuickShareDialogProps> = ({
   const [watermarkText, setWatermarkText] = useState('');
   const [allowedDomains, setAllowedDomains] = useState<string[]>([]);
   const [newDomain, setNewDomain] = useState('');
-  const [allowedEmails, setAllowedEmails] = useState<string[]>([]);
-  const [newEmail, setNewEmail] = useState('');
+  const [blockedEmails, setBlockedEmails] = useState<string[]>([]);
+  const [newBlockedEmail, setNewBlockedEmail] = useState('');
 
   // Custom Base URL for QR Code (fixes localhost issue)
   const [customBaseUrl, setCustomBaseUrl] = useState('');
@@ -162,6 +162,16 @@ export const QuickShareDialog: React.FC<QuickShareDialogProps> = ({
   const handleCreate = async () => {
     if (!selectedDocument) return;
 
+    // Validate password if enabled
+    if (hasPassword && (password.length < 4 || password.length > 8)) {
+      toast({
+        title: 'Invalid Password',
+        description: 'Password must be 4-8 characters',
+        variant: 'destructive'
+      });
+      return;
+    }
+
     setCreating(true);
     try {
       const params: CreateShareLinkParams = {
@@ -176,7 +186,7 @@ export const QuickShareDialog: React.FC<QuickShareDialogProps> = ({
         password: hasPassword ? password : undefined,
         require_email: requireEmail,
         require_name: requireName,
-        allowed_emails: allowedEmails.length > 0 ? allowedEmails : undefined,
+        blocked_emails: blockedEmails.length > 0 ? blockedEmails : undefined,
         allowed_domains: allowedDomains.length > 0 ? allowedDomains : undefined,
         max_uses: hasMaxUses ? maxUses : undefined,
         expires_in_hours: expiration > 0 ? expiration : undefined,
@@ -255,7 +265,7 @@ export const QuickShareDialog: React.FC<QuickShareDialogProps> = ({
     setWatermarkEnabled(false);
     setWatermarkText('');
     setAllowedDomains([]);
-    setAllowedEmails([]);
+    setBlockedEmails([]);
     setActiveTab('quick');
     setSearchQuery('');
     setCustomBaseUrl(window.location.origin);
@@ -268,17 +278,16 @@ export const QuickShareDialog: React.FC<QuickShareDialogProps> = ({
     }
   };
 
-  const addEmail = () => {
-    if (newEmail && !allowedEmails.includes(newEmail)) {
-      setAllowedEmails([...allowedEmails, newEmail]);
-      setNewEmail('');
+  const addBlockedEmail = () => {
+    if (newBlockedEmail && !blockedEmails.includes(newBlockedEmail)) {
+      setBlockedEmails([...blockedEmails, newBlockedEmail]);
+      setNewBlockedEmail('');
     }
   };
 
   const getPermissionIcon = (perm: ShareLinkPermission) => {
     switch (perm) {
       case 'view': return <Eye className="w-4 h-4" />;
-      case 'comment': return <MessageSquare className="w-4 h-4" />;
       case 'download': return <Download className="w-4 h-4" />;
       case 'edit': return <Edit className="w-4 h-4" />;
     }
@@ -656,19 +665,6 @@ export const QuickShareDialog: React.FC<QuickShareDialogProps> = ({
                     onChange={(e) => setPassword(e.target.value)}
                   />
                 )}
-
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="flex items-center gap-2">
-                      <Mail className="w-4 h-4" />
-                      Require Email
-                    </Label>
-                    <p className="text-xs text-muted-foreground">
-                      Collect visitor email before access
-                    </p>
-                  </div>
-                  <Switch checked={requireEmail} onCheckedChange={setRequireEmail} />
-                </div>
               </div>
             </TabsContent>
 
@@ -703,29 +699,19 @@ export const QuickShareDialog: React.FC<QuickShareDialogProps> = ({
                   <Switch checked={hasPassword} onCheckedChange={setHasPassword} />
                 </div>
                 {hasPassword && (
-                  <Input
-                    type="password"
-                    placeholder="Enter password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
+                  <div className="space-y-1">
+                    <Input
+                      type="password"
+                      placeholder="Enter password (4-8 characters)"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value.slice(0, 8))}
+                      maxLength={8}
+                    />
+                    <p className={`text-xs ${password.length >= 4 && password.length <= 8 ? 'text-green-600' : 'text-muted-foreground'}`}>
+                      {password.length}/8 characters {password.length < 4 && '(min 4 required)'}
+                    </p>
+                  </div>
                 )}
-
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label>Require Email</Label>
-                    <p className="text-xs text-muted-foreground">Collect email before access</p>
-                  </div>
-                  <Switch checked={requireEmail} onCheckedChange={setRequireEmail} />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label>Require Name</Label>
-                    <p className="text-xs text-muted-foreground">Collect name before access</p>
-                  </div>
-                  <Switch checked={requireName} onCheckedChange={setRequireName} />
-                </div>
               </div>
 
               <Separator />
@@ -785,27 +771,28 @@ export const QuickShareDialog: React.FC<QuickShareDialogProps> = ({
                   )}
                 </div>
 
-                {/* Email Whitelist */}
+                {/* Email Blocklist */}
                 <div className="space-y-2">
-                  <Label>Allowed Emails</Label>
+                  <Label>Blocked Emails</Label>
+                  <p className="text-xs text-muted-foreground">Block specific emails from accessing this link</p>
                   <div className="flex gap-2">
                     <Input
                       type="email"
-                      placeholder="e.g., partner@example.com"
-                      value={newEmail}
-                      onChange={(e) => setNewEmail(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && addEmail()}
+                      placeholder="e.g., blocked@example.com"
+                      value={newBlockedEmail}
+                      onChange={(e) => setNewBlockedEmail(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && addBlockedEmail()}
                     />
-                    <Button variant="outline" onClick={addEmail}>
+                    <Button variant="outline" onClick={addBlockedEmail}>
                       <Plus className="w-4 h-4" />
                     </Button>
                   </div>
-                  {allowedEmails.length > 0 && (
+                  {blockedEmails.length > 0 && (
                     <div className="flex flex-wrap gap-2 mt-2">
-                      {allowedEmails.map((email) => (
-                        <Badge key={email} variant="secondary" className="gap-1">
+                      {blockedEmails.map((email) => (
+                        <Badge key={email} variant="destructive" className="gap-1">
                           {email}
-                          <button onClick={() => setAllowedEmails(allowedEmails.filter(e => e !== email))}>
+                          <button onClick={() => setBlockedEmails(blockedEmails.filter(e => e !== email))}>
                             <X className="w-3 h-3" />
                           </button>
                         </Badge>

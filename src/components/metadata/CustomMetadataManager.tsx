@@ -3,6 +3,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,6 +41,8 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  FilePlus,
+  Search,
 } from 'lucide-react';
 import { useCustomMetadata, FieldType, MetadataDefinition } from '@/hooks/useCustomMetadata';
 import { CreateMetadataFieldDialog, MetadataFieldFormData } from './CreateMetadataFieldDialog';
@@ -70,7 +82,16 @@ export function CustomMetadataManager() {
   const [editingField, setEditingField] = useState<MetadataDefinition | null>(null);
   const [expandedFieldId, setExpandedFieldId] = useState<string | null>(null);
   const [fieldDocuments, setFieldDocuments] = useState<Record<string, DocumentWithMetadata[]>>({});
+  const [showAddDocsDialog, setShowAddDocsDialog] = useState(false);
+  const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const [allDocuments, setAllDocuments] = useState<DocumentWithMetadata[]>([]);
+  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+  const [loadingAllDocs, setLoadingAllDocs] = useState(false);
+  const [docSearchQuery, setDocSearchQuery] = useState('');
   const [loadingFieldDocs, setLoadingFieldDocs] = useState<string | null>(null);
+  const [viewingDocId, setViewingDocId] = useState<string | null>(null);
+  const [documentUrl, setDocumentUrl] = useState<string | null>(null);
+  const [loadingDocUrl, setLoadingDocUrl] = useState(false);
 
   const handleOpenCreate = () => {
     setEditingField(null);
@@ -118,6 +139,108 @@ export function CustomMetadataManager() {
       } finally {
         setLoadingFieldDocs(null);
       }
+    }
+  };
+
+  const handleOpenAddDocs = async (fieldId: string) => {
+    setSelectedFieldId(fieldId);
+    setSelectedDocIds([]);
+    setDocSearchQuery('');
+    setShowAddDocsDialog(true);
+
+    // Fetch all documents
+    setLoadingAllDocs(true);
+    try {
+      const { data: user } = await supabase.auth.getUser();
+      if (!user.user) return;
+
+      const { data, error } = await supabase
+        .from('documents')
+        .select('id, file_name')
+        .eq('user_id', user.user.id)
+        .eq('is_deleted', false)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      setAllDocuments((data || []).map((doc: any) => ({
+        id: doc.id,
+        file_name: doc.file_name,
+        field_value: '',
+      })));
+    } catch (err) {
+      console.error('Error fetching documents:', err);
+    } finally {
+      setLoadingAllDocs(false);
+    }
+  };
+
+  const handleAddDocsToField = async () => {
+    if (!selectedFieldId || selectedDocIds.length === 0) return;
+
+    try {
+      // Apply empty string value to selected documents
+      for (const docId of selectedDocIds) {
+        await setDocumentMetadata(docId, selectedFieldId, '');
+      }
+
+      // Refresh the field documents
+      setFieldDocuments(prev => {
+        const updated = { ...prev };
+        delete updated[selectedFieldId];
+        return updated;
+      });
+
+      setShowAddDocsDialog(false);
+      setSelectedDocIds([]);
+    } catch (err) {
+      console.error('Error adding documents to field:', err);
+    }
+  };
+
+  const toggleDocSelection = (docId: string) => {
+    setSelectedDocIds(prev =>
+      prev.includes(docId)
+        ? prev.filter(id => id !== docId)
+        : [...prev, docId]
+    );
+  };
+
+  const handleViewDocument = async (docId: string) => {
+    setViewingDocId(docId);
+    setLoadingDocUrl(true);
+    setDocumentUrl(null);
+
+    try {
+      // Fetch document details
+      const { data: docData, error: docError } = await supabase
+        .from('documents')
+        .select('storage_path, file_name')
+        .eq('id', docId)
+        .single();
+
+      if (docError || !docData || !docData.storage_path) {
+        console.error('Document not found or no storage path');
+        setLoadingDocUrl(false);
+        return;
+      }
+
+      // Get signed URL
+      const { data: urlData, error: urlError } = await supabase.storage
+        .from('documents')
+        .createSignedUrl(docData.storage_path, 3600);
+
+      if (urlError || !urlData?.signedUrl) {
+        console.error('Failed to create signed URL');
+        setLoadingDocUrl(false);
+        return;
+      }
+
+      setDocumentUrl(urlData.signedUrl);
+    } catch (err) {
+      console.error('Error fetching document:', err);
+    } finally {
+      setLoadingDocUrl(false);
     }
   };
 
@@ -269,6 +392,10 @@ export function CustomMetadataManager() {
                                   <Pencil className="h-4 w-4 mr-2" />
                                   Edit
                                 </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleOpenAddDocs(def.id)}>
+                                  <FilePlus className="h-4 w-4 mr-2" />
+                                  Add Documents
+                                </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onClick={() => deleteDefinition(def.id)}
                                   className="text-destructive"
@@ -315,12 +442,15 @@ export function CustomMetadataManager() {
                                   {docs.map((doc) => (
                                     <div
                                       key={doc.id}
-                                      className="flex items-center gap-2 text-sm p-2 rounded bg-background border"
+                                      className="group flex items-center gap-2 text-sm p-2 rounded bg-background border hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-all duration-200"
+                                      onClick={() => handleViewDocument(doc.id)}
                                     >
-                                      <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                                      <span className="truncate flex-1">{doc.file_name}</span>
-                                      <span className="text-xs text-muted-foreground truncate max-w-[100px]">
-                                        = {doc.field_value}
+                                      <FileText className="h-4 w-4 text-muted-foreground group-hover:text-primary flex-shrink-0 transition-colors" />
+                                      <span className="truncate flex-1 font-medium group-hover:text-primary group-hover:underline underline-offset-2 transition-colors">
+                                        {doc.file_name}
+                                      </span>
+                                      <span className="text-xs text-muted-foreground/70 truncate max-w-[100px]">
+                                        = {doc.field_value || '(empty)'}
                                       </span>
                                     </div>
                                   ))}
@@ -345,6 +475,105 @@ export function CustomMetadataManager() {
         onSubmit={handleSubmit}
         editingField={editingField}
       />
+
+      <Dialog open={showAddDocsDialog} onOpenChange={setShowAddDocsDialog}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Add Documents to Field</DialogTitle>
+            <DialogDescription>
+              Select documents to add this metadata field to
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search documents..."
+                value={docSearchQuery}
+                onChange={(e) => setDocSearchQuery(e.target.value)}
+                className="pl-8"
+              />
+            </div>
+
+            {loadingAllDocs ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            ) : allDocuments.filter(doc =>
+              doc.file_name.toLowerCase().includes(docSearchQuery.toLowerCase())
+            ).length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No documents found
+              </p>
+            ) : (
+              <ScrollArea className="h-[300px] border rounded-md">
+                <div className="p-3 space-y-2">
+                  {allDocuments
+                    .filter(doc => doc.file_name.toLowerCase().includes(docSearchQuery.toLowerCase()))
+                    .map(doc => (
+                      <label
+                        key={doc.id}
+                        className="flex items-center gap-2 p-2 rounded hover:bg-accent/50 cursor-pointer"
+                      >
+                        <Checkbox
+                          checked={selectedDocIds.includes(doc.id)}
+                          onCheckedChange={() => toggleDocSelection(doc.id)}
+                        />
+                        <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        <span className="text-sm truncate">{doc.file_name}</span>
+                      </label>
+                    ))}
+                </div>
+              </ScrollArea>
+            )}
+
+            {selectedDocIds.length > 0 && (
+              <p className="text-sm text-primary">
+                {selectedDocIds.length} document(s) selected
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setShowAddDocsDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddDocsToField}
+              disabled={selectedDocIds.length === 0}
+            >
+              Add to Field
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={viewingDocId !== null} onOpenChange={() => setViewingDocId(null)}>
+        <DialogContent className="max-w-4xl h-[85vh] p-0 gap-0">
+          <DialogHeader className="px-6 pt-4 pb-2">
+            <DialogTitle>Document Preview</DialogTitle>
+          </DialogHeader>
+
+          {loadingDocUrl ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+          ) : documentUrl ? (
+            <div className="flex-1 h-[calc(85vh-60px)]">
+              <iframe
+                src={documentUrl}
+                className="w-full h-full"
+                title="Document Preview"
+              />
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-full text-muted-foreground">
+              Unable to load document preview
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

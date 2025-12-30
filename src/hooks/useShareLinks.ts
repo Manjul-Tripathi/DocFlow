@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { EnhancedShareLink, CreateShareLinkParams } from '@/types/shareLink';
 
@@ -12,6 +13,7 @@ export function useShareLinks(resourceId?: string, resourceType?: string) {
   const [links, setLinks] = useState<EnhancedShareLink[]>(() => loadShareLinksFromStorage());
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const { user } = useAuth();
   const initialFetchDone = useRef(false);
 
   // Save to localStorage whenever links change
@@ -116,6 +118,7 @@ export function useShareLinks(resourceId?: string, resourceType?: string) {
         require_name: params.require_name ?? false,
         allowed_emails: params.allowed_emails,
         allowed_domains: params.allowed_domains,
+        blocked_emails: params.blocked_emails,
         max_uses: params.max_uses,
         use_count: 0,
         expires_at: params.expires_in_hours
@@ -129,7 +132,7 @@ export function useShareLinks(resourceId?: string, resourceType?: string) {
         download_count: 0,
         unique_visitor_ids: [],
         name: params.name,
-        created_by: 'current-user',
+        created_by: user?.id || 'anonymous',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         is_active: true

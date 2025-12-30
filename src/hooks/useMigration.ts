@@ -2,10 +2,10 @@ import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import type { 
-  MigrationJob, 
-  MigrationItem, 
-  MigrationConfig, 
+import type {
+  MigrationJob,
+  MigrationItem,
+  MigrationConfig,
   MigrationMetrics,
   MigrationAuditLog,
   SourceSystem,
@@ -13,64 +13,51 @@ import type {
   IdentityMapping
 } from '@/types/migration';
 
+const API_BASE = 'http://localhost:8000/api/migration';
+
 export function useMigration() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
-  // Fetch all migration jobs
+  // Fetch all migration jobs from backend API
   const { data: jobs = [], isLoading: jobsLoading, refetch: refetchJobs } = useQuery({
     queryKey: ['migration-jobs'],
     queryFn: async () => {
-      const { data, error } = await (supabase
-        .from('migration_jobs')
-        .select('*')
-        .order('created_at', { ascending: false }) as any);
-      
-      if (error) throw error;
-      
-      // Map database columns to expected TypeScript interface
-      return (data || []).map((row: any) => ({
-        id: row.id,
-        user_id: row.user_id,
-        name: row.job_name || row.name || 'Untitled Job',
-        source_system: row.migration_type || row.source_system || 'google_drive',
-        status: row.job_status || row.status || 'pending',
-        config: row.source_config || row.config || {},
-        source_credentials_id: row.source_credentials_id,
-        total_items: row.total_items || 0,
-        processed_items: row.processed_items || 0,
-        failed_items: row.failed_items || 0,
-        skipped_items: row.skipped_items || 0,
-        total_bytes: row.total_bytes || 0,
-        transferred_bytes: row.transferred_bytes || 0,
-        started_at: row.start_time || row.started_at,
-        completed_at: row.end_time || row.completed_at,
-        last_checkpoint: row.last_checkpoint,
-        error_summary: row.error_summary,
-        created_at: row.created_at,
-        updated_at: row.updated_at
-      })) as MigrationJob[];
-    }
+      const { data: userData } = await supabase.auth.getUser();
+      if (!userData.user) return [];
+
+      const response = await fetch(`${API_BASE}/jobs?user_id=${userData.user.id}`);
+
+      if (!response.ok) {
+        console.error('Failed to fetch migration jobs:', response.status);
+        return [];
+      }
+
+      const data = await response.json();
+      return data as MigrationJob[];
+    },
+    refetchInterval: 3000  // Poll every 3 seconds to catch status updates
   });
 
-  // Fetch items for selected job with pagination
+  // Fetch items for selected job
   const { data: jobItems = [], isLoading: itemsLoading, refetch: refetchItems } = useQuery({
     queryKey: ['migration-items', selectedJobId],
     queryFn: async () => {
       if (!selectedJobId) return [];
-      
-      const { data, error } = await (supabase
+
+      const { data, error } = await supabase
         .from('migration_items')
         .select('*')
         .eq('job_id', selectedJobId)
         .order('created_at', { ascending: false })
-        .limit(100) as any);
-      
+        .limit(100);
+
       if (error) throw error;
       return data as MigrationItem[];
     },
-    enabled: !!selectedJobId
+    enabled: !!selectedJobId,
+    refetchInterval: 3000  // Poll every 3 seconds
   });
 
   // Fetch metrics for selected job
@@ -78,50 +65,52 @@ export function useMigration() {
     queryKey: ['migration-metrics', selectedJobId],
     queryFn: async () => {
       if (!selectedJobId) return [];
-      
-      const { data, error } = await (supabase
+
+      const { data, error } = await supabase
         .from('migration_metrics')
         .select('*')
         .eq('job_id', selectedJobId)
         .order('recorded_at', { ascending: false })
-        .limit(60) as any);
-      
+        .limit(60);
+
       if (error) throw error;
       return data as MigrationMetrics[];
     },
     enabled: !!selectedJobId,
-    refetchInterval: 5000 // Refresh every 5 seconds for live updates
+    refetchInterval: 5000
   });
 
-  // Fetch audit logs for selected job
+  // Fetch audit logs
   const { data: auditLogs = [] } = useQuery({
     queryKey: ['migration-audit-logs', selectedJobId],
     queryFn: async () => {
       if (!selectedJobId) return [];
-      
-      const { data, error } = await (supabase
+
+      const { data, error } = await supabase
         .from('migration_audit_log')
         .select('*')
         .eq('job_id', selectedJobId)
         .order('created_at', { ascending: false })
-        .limit(100) as any);
-      
+        .limit(100);
+
       if (error) throw error;
       return data as MigrationAuditLog[];
     },
     enabled: !!selectedJobId
   });
 
-  // Fetch credentials
+  // Fetch credentials from backend API
   const { data: credentials = [] } = useQuery({
     queryKey: ['migration-credentials'],
     queryFn: async () => {
-      const { data, error } = await (supabase
-        .from('migration_credentials')
-        .select('*')
-        .order('created_at', { ascending: false }) as any);
-      
-      if (error) throw error;
+      const { data: userData } = await supabase.auth.getUser();
+      if (!userData.user) return [];
+
+      const response = await fetch(`${API_BASE}/credentials?user_id=${userData.user.id}`);
+
+      if (!response.ok) return [];
+
+      const data = await response.json();
       return data as MigrationCredentials[];
     }
   });
@@ -130,17 +119,17 @@ export function useMigration() {
   const { data: identityMappings = [] } = useQuery({
     queryKey: ['identity-mappings'],
     queryFn: async () => {
-      const { data, error } = await (supabase
+      const { data, error } = await supabase
         .from('identity_mappings')
         .select('*')
-        .order('created_at', { ascending: false }) as any);
-      
+        .order('created_at', { ascending: false });
+
       if (error) throw error;
       return data as IdentityMapping[];
     }
   });
 
-  // Create new migration job
+  // Create new migration job via backend API
   const createJobMutation = useMutation({
     mutationFn: async (params: {
       name: string;
@@ -151,20 +140,23 @@ export function useMigration() {
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error('Not authenticated');
 
-      const { data, error } = await (supabase
-        .from('migration_jobs')
-        .insert({
-          user_id: userData.user.id,
-          job_name: params.name,
-          migration_type: params.source_system,
-          source_config: params.config,
-          job_status: 'pending'
-        } as any)
-        .select()
-        .single() as any);
-      
-      if (error) throw error;
-      return data;
+      const response = await fetch(`${API_BASE}/jobs?user_id=${userData.user.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: params.name,
+          source_system: params.source_system,
+          credentials_id: params.credentials_id || '',
+          folder_id: params.config.source_folder_id || null,
+          config: params.config
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to create job');
+      }
+      return await response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['migration-jobs'] });
@@ -175,29 +167,27 @@ export function useMigration() {
     }
   });
 
-  // Start migration job
+  // Start migration job via backend API
   const startJobMutation = useMutation({
     mutationFn: async (jobId: string) => {
-      const { error } = await (supabase
-        .from('migration_jobs')
-        .update({ 
-          job_status: 'discovering',
-          start_time: new Date().toISOString()
-        } as any)
-        .eq('id', jobId) as any);
-      
-      if (error) throw error;
+      const { data: userData } = await supabase.auth.getUser();
+      if (!userData.user) throw new Error('Not authenticated');
 
-      // Trigger edge function to start processing
-      const { error: funcError } = await supabase.functions.invoke('migration-orchestrator', {
-        body: { action: 'start', job_id: jobId }
-      });
-      
-      if (funcError) throw funcError;
+      const response = await fetch(
+        `${API_BASE}/jobs/${jobId}/start?user_id=${userData.user.id}`,
+        { method: 'POST' }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to start job');
+      }
+
+      return await response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['migration-jobs'] });
-      toast({ title: 'Migration started' });
+      toast({ title: 'Migration started successfully' });
     },
     onError: (error: Error) => {
       toast({ title: 'Failed to start migration', description: error.message, variant: 'destructive' });
@@ -207,11 +197,11 @@ export function useMigration() {
   // Pause migration job
   const pauseJobMutation = useMutation({
     mutationFn: async (jobId: string) => {
-      const { error } = await (supabase
+      const { error } = await supabase
         .from('migration_jobs')
-        .update({ job_status: 'paused' } as any)
-        .eq('id', jobId) as any);
-      
+        .update({ status: 'paused' })
+        .eq('id', jobId);
+
       if (error) throw error;
     },
     onSuccess: () => {
@@ -223,16 +213,12 @@ export function useMigration() {
   // Resume migration job
   const resumeJobMutation = useMutation({
     mutationFn: async (jobId: string) => {
-      const { error } = await (supabase
+      const { error } = await supabase
         .from('migration_jobs')
-        .update({ job_status: 'running' } as any)
-        .eq('id', jobId) as any);
-      
-      if (error) throw error;
+        .update({ status: 'running' })
+        .eq('id', jobId);
 
-      await supabase.functions.invoke('migration-orchestrator', {
-        body: { action: 'resume', job_id: jobId }
-      });
+      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['migration-jobs'] });
@@ -243,14 +229,14 @@ export function useMigration() {
   // Cancel migration job
   const cancelJobMutation = useMutation({
     mutationFn: async (jobId: string) => {
-      const { error } = await (supabase
+      const { error } = await supabase
         .from('migration_jobs')
-        .update({ 
-          job_status: 'cancelled',
-          end_time: new Date().toISOString()
-        } as any)
-        .eq('id', jobId) as any);
-      
+        .update({
+          status: 'cancelled',
+          completed_at: new Date().toISOString()
+        })
+        .eq('id', jobId);
+
       if (error) throw error;
     },
     onSuccess: () => {
@@ -262,22 +248,18 @@ export function useMigration() {
   // Retry failed items
   const retryFailedMutation = useMutation({
     mutationFn: async (jobId: string) => {
-      const { error } = await (supabase
+      const { error } = await supabase
         .from('migration_items')
-        .update({ 
+        .update({
           status: 'pending',
           attempt_count: 0,
           last_error: null,
           error_code: null
         })
         .eq('job_id', jobId)
-        .eq('status', 'failed') as any);
-      
-      if (error) throw error;
+        .eq('status', 'failed');
 
-      await supabase.functions.invoke('migration-orchestrator', {
-        body: { action: 'retry_failed', job_id: jobId }
-      });
+      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['migration-items', selectedJobId] });
@@ -285,7 +267,7 @@ export function useMigration() {
     }
   });
 
-  // Save credentials
+  // Save credentials via backend API
   const saveCredentialsMutation = useMutation({
     mutationFn: async (params: {
       name: string;
@@ -295,35 +277,40 @@ export function useMigration() {
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error('Not authenticated');
 
-      const { data, error } = await (supabase
-        .from('migration_credentials')
-        .insert({
-          user_id: userData.user.id,
+      const response = await fetch(`${API_BASE}/credentials?user_id=${userData.user.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           name: params.name,
           source_system: params.source_system,
-          credentials_encrypted: params.credentials
+          credentials: params.credentials
         })
-        .select()
-        .single() as any);
-      
-      if (error) throw error;
-      return data;
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to save credentials');
+      }
+      return await response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['migration-credentials'] });
-      toast({ title: 'Credentials saved' });
+      toast({ title: 'Credentials saved successfully' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Failed to save credentials', description: error.message, variant: 'destructive' });
     }
   });
 
   // Save identity mapping
   const saveIdentityMappingMutation = useMutation({
     mutationFn: async (mapping: Omit<IdentityMapping, 'id' | 'created_at' | 'updated_at'>) => {
-      const { data, error } = await (supabase
+      const { data, error } = await supabase
         .from('identity_mappings')
         .upsert(mapping, { onConflict: 'user_id,source_system,source_principal_id' })
         .select()
-        .single() as any);
-      
+        .single();
+
       if (error) throw error;
       return data;
     },
@@ -335,12 +322,12 @@ export function useMigration() {
 
   // Get job statistics
   const getJobStats = useCallback((job: MigrationJob) => {
-    const progress = job.total_items > 0 
-      ? Math.round((job.processed_items / job.total_items) * 100) 
+    const progress = job.total_items > 0
+      ? Math.round((job.processed_items / job.total_items) * 100)
       : 0;
-    
-    const bytesProgress = job.total_bytes > 0 
-      ? Math.round((job.transferred_bytes / job.total_bytes) * 100) 
+
+    const bytesProgress = job.total_bytes > 0
+      ? Math.round((job.transferred_bytes / job.total_bytes) * 100)
       : 0;
 
     const eta = calculateEta(job, metrics[0]);
@@ -364,11 +351,11 @@ export function useMigration() {
     credentials,
     identityMappings,
     selectedJobId,
-    
+
     // Loading states
     jobsLoading,
     itemsLoading,
-    
+
     // Actions
     setSelectedJobId,
     createJob: createJobMutation.mutate,
@@ -381,10 +368,10 @@ export function useMigration() {
     saveIdentityMapping: saveIdentityMappingMutation.mutate,
     refetchJobs,
     refetchItems,
-    
+
     // Helpers
     getJobStats,
-    
+
     // Mutation states
     isCreating: createJobMutation.isPending,
     isStarting: startJobMutation.isPending
@@ -393,13 +380,13 @@ export function useMigration() {
 
 function calculateEta(job: MigrationJob, latestMetric?: MigrationMetrics): string | null {
   if (!latestMetric?.files_per_minute || job.status !== 'running') return null;
-  
+
   const remaining = job.total_items - job.processed_items;
   const minutesRemaining = remaining / latestMetric.files_per_minute;
-  
+
   if (minutesRemaining < 1) return 'Less than 1 minute';
   if (minutesRemaining < 60) return `~${Math.round(minutesRemaining)} minutes`;
-  
+
   const hours = Math.floor(minutesRemaining / 60);
   const mins = Math.round(minutesRemaining % 60);
   return `~${hours}h ${mins}m`;

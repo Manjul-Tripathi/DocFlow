@@ -1,7 +1,8 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { useToast } from '@/hooks/use-toast';
 import { useOfflineMode } from '@/hooks/useOfflineMode';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 
 import { FeatureNavigation } from './components/FeatureNavigation';
@@ -11,9 +12,9 @@ import { FeatureContent } from './components/FeatureContent';
 import { DocumentModals } from './components/DocumentModals';
 import { DocumentChatbot } from '../document-manager/DocumentChatbot';
 import { DocumentViewer } from '../document-manager/DocumentViewer';
-import { 
-  OfflineDocumentsPanel, 
-  SyncStatusDialog 
+import {
+  OfflineDocumentsPanel,
+  SyncStatusDialog
 } from '../offline';
 import { SyncNotificationDialog } from '../offline/SyncNotificationDialog';
 import { useDocuments } from './hooks/useDocuments';
@@ -21,6 +22,8 @@ import { useDocumentFiltering } from './hooks/useDocumentFiltering';
 import type { Document, ViewMode, SortOrder } from './types';
 
 export function SimplifyDrive() {
+  const [searchParams] = useSearchParams();
+
   // Documents & filtering
   const [selectedFolder, setSelectedFolder] = useState('all');
   const { documents, loading, stats, refetch } = useDocuments({ selectedFolder });
@@ -28,9 +31,9 @@ export function SimplifyDrive() {
   const [selectedTag, setSelectedTag] = useState('all');
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
-  
+
   console.log('🔍 SimplifyDrive: documents count:', documents.length, 'selectedFolder:', selectedFolder);
-  
+
   const { filteredDocuments } = useDocumentFiltering({
     documents,
     searchQuery,
@@ -44,7 +47,15 @@ export function SimplifyDrive() {
   const [viewMode, setViewMode] = useLocalStorage<ViewMode>('simplify_drive_view_mode', 'grid');
   const [activeFeature, setActiveFeature] = useState('documents');
   const [aiInsightsEnabled, setAiInsightsEnabled] = useState(true);
-  
+
+  // Handle URL parameters for feature switching
+  useEffect(() => {
+    const feature = searchParams.get('feature');
+    if (feature) {
+      setActiveFeature(feature);
+    }
+  }, [searchParams]);
+
   // Modal State
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showScannerModal, setShowScannerModal] = useState(false);
@@ -54,11 +65,11 @@ export function SimplifyDrive() {
   const [summaryDocument, setSummaryDocument] = useState<Document | null>(null);
   const [showDocumentViewer, setShowDocumentViewer] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
-  
+
   // Chatbot State
   const [showChatbot, setShowChatbot] = useState(true);
   const [chatbotMinimized, setChatbotMinimized] = useState(true);
-  
+
   // Offline State
   const [showOfflinePanel, setShowOfflinePanel] = useState(false);
   const [showSyncDialog, setShowSyncDialog] = useState(false);
@@ -153,7 +164,7 @@ export function SimplifyDrive() {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      
+
       toast({
         title: "Download started",
         description: `Downloading ${doc.file_name}`,
@@ -191,7 +202,7 @@ export function SimplifyDrive() {
 
       for (let i = 0; i < pages.length; i++) {
         const page = pages[i];
-        
+
         // Convert data URL to blob
         const response = await fetch(page.fullImage);
         const blob = await response.blob();
@@ -256,7 +267,7 @@ export function SimplifyDrive() {
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
       {/* Feature Navigation */}
-      <FeatureNavigation 
+      <FeatureNavigation
         activeFeature={activeFeature}
         onFeatureChange={setActiveFeature}
       />
@@ -330,7 +341,7 @@ export function SimplifyDrive() {
 
       {/* RAG AI Chatbot - Fixed position */}
       {showChatbot && (
-        <DocumentChatbot 
+        <DocumentChatbot
           onClose={() => setShowChatbot(false)}
           isMinimized={chatbotMinimized}
           onToggleMinimize={() => setChatbotMinimized(!chatbotMinimized)}
@@ -346,13 +357,13 @@ export function SimplifyDrive() {
           setSelectedDocument(null);
         }}
       />
-      
+
       {/* Offline Documents Panel */}
       <OfflineDocumentsPanel
         isOpen={showOfflinePanel}
         onClose={() => setShowOfflinePanel(false)}
       />
-      
+
       {/* Sync Status Dialog */}
       <SyncStatusDialog
         isOpen={showSyncDialog}

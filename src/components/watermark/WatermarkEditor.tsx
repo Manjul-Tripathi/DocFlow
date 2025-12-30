@@ -40,10 +40,13 @@ import {
   Search,
   Check,
   X,
+  Download,
+  Eye,
 } from 'lucide-react';
 import { useWatermark, WatermarkSettings, WatermarkPosition, WatermarkType } from '@/hooks/useWatermark';
 import { WatermarkPreview } from './WatermarkPreview';
 import { supabase } from '@/integrations/supabase/client';
+import { DocumentViewer } from '../document-manager/DocumentViewer';
 
 const positionOptions: { value: WatermarkPosition; label: string }[] = [
   { value: 'center', label: 'Center' },
@@ -69,7 +72,7 @@ interface DocumentItem {
 }
 
 export function WatermarkEditor() {
-  const { watermarks, isLoading, createWatermark, updateWatermark, deleteWatermark } = useWatermark();
+  const { watermarks, isLoading, createWatermark, updateWatermark, deleteWatermark, downloadDocumentWithWatermark } = useWatermark();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingWatermark, setEditingWatermark] = useState<WatermarkSettings | null>(null);
   const [formData, setFormData] = useState({
@@ -95,6 +98,12 @@ export function WatermarkEditor() {
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [docSearchQuery, setDocSearchQuery] = useState('');
   const [showDocResults, setShowDocResults] = useState(false);
+  const [showDocumentPreview, setShowDocumentPreview] = useState(false);
+  const [previewDocument, setPreviewDocument] = useState<DocumentItem | null>(null);
+
+  // State for viewing a watermarked document from the list
+  const [viewingWatermark, setViewingWatermark] = useState<WatermarkSettings | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<any>(null);
 
   const resetForm = () => {
     setFormData({
@@ -179,6 +188,58 @@ export function WatermarkEditor() {
     }
   }, [showCreateDialog, docSearchQuery]);
 
+  // Fetch full document data when opening preview
+  useEffect(() => {
+    if (!showDocumentPreview || !formData.document_id) {
+      setPreviewDocument(null);
+      return;
+    }
+
+    const fetchFullDocument = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('documents')
+          .select('*')
+          .eq('id', formData.document_id)
+          .single();
+
+        if (error) throw error;
+        setPreviewDocument(data as any);
+      } catch (err) {
+        console.error('Error fetching document:', err);
+        setPreviewDocument(null);
+      }
+    };
+
+    fetchFullDocument();
+  }, [showDocumentPreview, formData.document_id]);
+
+  // Fetch document when viewing a watermark from the list
+  useEffect(() => {
+    if (!viewingWatermark || !viewingWatermark.document_id) {
+      setViewingDoc(null);
+      return;
+    }
+
+    const fetchDoc = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('documents')
+          .select('*')
+          .eq('id', viewingWatermark.document_id)
+          .single();
+
+        if (error) throw error;
+        setViewingDoc(data);
+      } catch (err) {
+        console.error('Error fetching document:', err);
+        setViewingDoc(null);
+      }
+    };
+
+    fetchDoc();
+  }, [viewingWatermark]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) return;
@@ -260,40 +321,37 @@ export function WatermarkEditor() {
               </Button>
             </div>
           ) : (
-            <ScrollArea className="max-h-[500px]">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <ScrollArea className="h-[400px] pr-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {watermarks.map((wm) => (
-                  <Card key={wm.id} className="relative overflow-hidden">
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-medium">{wm.name}</h4>
+                  <Card key={wm.id} className="relative overflow-hidden hover:shadow-md transition-shadow">
+                    <CardContent className="p-3">
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <h4 className="font-medium text-sm truncate">{wm.name}</h4>
                             {wm.is_default && (
-                              <Badge variant="secondary" className="text-xs">
-                                <Star className="h-3 w-3 mr-1 fill-current" />
+                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                                <Star className="h-2.5 w-2.5 mr-0.5 fill-current" />
                                 Default
                               </Badge>
                             )}
                           </div>
 
-                          <div className="text-xs text-muted-foreground mt-1 space-y-1">
-                            <p>
-                              {wm.watermark_type === 'text' ? `"${wm.text_content}"` : 'Image watermark'}
-                              {' • '}{wm.position}
-                            </p>
-                            {wm.document?.file_name && (
-                              <div className="flex items-center gap-1 text-primary/80 font-medium">
-                                <FileText className="h-3 w-3" />
-                                <span>{wm.document.file_name}</span>
-                              </div>
-                            )}
-                          </div>
+                          <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                            {wm.watermark_type === 'text' ? `"${wm.text_content}"` : 'Image'} • {wm.position}
+                          </p>
+                          {wm.document?.file_name && (
+                            <div className="flex items-center gap-1 text-[10px] text-primary/80 mt-0.5 truncate">
+                              <FileText className="h-2.5 w-2.5 flex-shrink-0" />
+                              <span className="truncate">{wm.document.file_name}</span>
+                            </div>
+                          )}
                         </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm">
-                              <MoreHorizontal className="h-4 w-4" />
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                              <MoreHorizontal className="h-3.5 w-3.5" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
@@ -314,14 +372,30 @@ export function WatermarkEditor() {
                               <Trash2 className="h-4 w-4 mr-2" />
                               Delete
                             </DropdownMenuItem>
+                            {wm.document_id && (
+                              <>
+                                <DropdownMenuItem
+                                  onClick={() => setViewingWatermark(wm)}
+                                >
+                                  <Eye className="h-4 w-4 mr-2" />
+                                  View Document
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => downloadDocumentWithWatermark(wm.document_id!, wm, wm.document?.file_name)}
+                                >
+                                  <Download className="h-4 w-4 mr-2" />
+                                  Download with Watermark
+                                </DropdownMenuItem>
+                              </>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
                       <WatermarkPreview
                         settings={wm}
-                        width={250}
-                        height={180}
-                        className="w-full"
+                        width={150}
+                        height={100}
+                        className="w-full rounded"
                       />
                     </CardContent>
                   </Card>
@@ -361,7 +435,7 @@ export function WatermarkEditor() {
 
                 {/* Document Selection */}
                 <div className="space-y-2">
-                  <Label>Apply to Document (Optional)</Label>
+                  <Label>Apply to Document</Label>
                   {formData.document_id ? (
                     <div className="flex items-center justify-between p-2 rounded-md border bg-accent/20">
                       <div className="flex items-center gap-2 text-sm truncate">
@@ -396,7 +470,7 @@ export function WatermarkEditor() {
 
                       {showDocResults && (docSearchQuery || documents.length > 0) && (
                         <div className="absolute top-full left-0 right-0 z-10 mt-1 rounded-md border bg-popover text-popover-foreground shadow-md outline-none animate-in fade-in-0 zoom-in-95">
-                          <ScrollArea className="max-h-[200px]">
+                          <ScrollArea className="h-[200px] overflow-y-auto">
                             <div className="p-1">
                               {loadingDocs ? (
                                 <div className="flex items-center justify-center py-4 text-sm text-muted-foreground">
@@ -584,7 +658,34 @@ export function WatermarkEditor() {
                   width={300}
                   height={400}
                   className="w-full"
+                  documentId={formData.document_id}
                 />
+                {formData.document_id ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground text-center">
+                      Preview shows watermark on sample content
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => {
+                        // Close create dialog first, then open document preview
+                        setShowCreateDialog(false);
+                        // Small delay to allow dialog close animation
+                        setTimeout(() => setShowDocumentPreview(true), 200);
+                      }}
+                    >
+                      <FileText className="h-4 w-4 mr-2" />
+                      View Actual Document with Watermark
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center">
+                    Select a document to preview watermark
+                  </p>
+                )}
               </div>
             </div>
 
@@ -608,6 +709,41 @@ export function WatermarkEditor() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Document Preview with Watermark - pass current form settings */}
+      {formData.document_id && previewDocument && showDocumentPreview && (
+        <DocumentViewer
+          document={previewDocument}
+          isOpen={showDocumentPreview}
+          onClose={() => {
+            setShowDocumentPreview(false);
+            // Reopen the create/edit dialog after closing preview
+            setTimeout(() => setShowCreateDialog(true), 200);
+          }}
+          customWatermark={{
+            text_content: formData.text_content,
+            font_family: formData.font_family,
+            font_size: formData.font_size,
+            text_color: formData.text_color,
+            rotation: formData.rotation,
+            opacity: formData.opacity,
+            position: formData.position,
+            include_date: formData.include_date,
+            include_username: formData.include_username,
+            watermark_type: formData.watermark_type,
+          }}
+        />
+      )}
+
+      {/* View Watermarked Document from List - pass the saved watermark settings */}
+      {viewingWatermark && viewingDoc && (
+        <DocumentViewer
+          document={viewingDoc}
+          isOpen={!!viewingWatermark}
+          onClose={() => setViewingWatermark(null)}
+          customWatermark={viewingWatermark}
+        />
+      )}
     </>
   );
 }

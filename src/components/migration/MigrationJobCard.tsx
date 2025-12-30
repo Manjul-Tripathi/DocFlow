@@ -3,12 +3,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { 
-  Cloud, 
-  HardDrive, 
-  Database, 
-  Play, 
-  Pause, 
+import {
+  Cloud,
+  HardDrive,
+  Database,
+  Play,
+  Pause,
   Square,
   Clock,
   AlertCircle,
@@ -79,7 +79,7 @@ export function MigrationJobCard({
   };
 
   return (
-    <Card 
+    <Card
       className={cn(
         "cursor-pointer transition-all hover:shadow-md",
         isSelected && "ring-2 ring-primary"
@@ -93,7 +93,7 @@ export function MigrationJobCard({
             <div>
               <p className="font-medium text-sm truncate max-w-[150px]">{job.name}</p>
               <p className="text-xs text-muted-foreground">
-                {job.source_system.replace('_', ' ')}
+                {job.source_system?.replace('_', ' ') || 'Unknown'}
               </p>
             </div>
           </div>
@@ -124,11 +124,38 @@ export function MigrationJobCard({
           )}
         </div>
 
+        {/* Transfer Time for Completed Jobs */}
+        {job.status === 'completed' && job.config && (
+          <div className="flex items-center gap-3 text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
+            <div className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              <span className="font-medium">
+                {job.config.total_time_seconds
+                  ? `${job.config.total_time_seconds}s`
+                  : job.config.transfer_time_seconds
+                    ? `${job.config.transfer_time_seconds}s`
+                    : '—'
+                }
+              </span>
+            </div>
+            {job.transferred_bytes > 0 && (
+              <span>
+                {(job.transferred_bytes / 1024).toFixed(1)} KB
+              </span>
+            )}
+            {job.config.speed_mbps > 0 && (
+              <span>
+                {(job.config.speed_mbps * 1024).toFixed(0)} KB/s
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Actions */}
         <div className="flex gap-2">
           {job.status === 'pending' && (
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="default"
               className="w-full"
               onClick={(e) => handleAction(e, onStart)}
@@ -139,8 +166,8 @@ export function MigrationJobCard({
           )}
           {['running', 'discovering'].includes(job.status) && (
             <>
-              <Button 
-                size="sm" 
+              <Button
+                size="sm"
                 variant="outline"
                 className="flex-1"
                 onClick={(e) => handleAction(e, onPause)}
@@ -148,8 +175,8 @@ export function MigrationJobCard({
                 <Pause className="h-3 w-3 mr-1" />
                 Pause
               </Button>
-              <Button 
-                size="sm" 
+              <Button
+                size="sm"
                 variant="destructive"
                 onClick={(e) => handleAction(e, onCancel)}
               >
@@ -159,8 +186,8 @@ export function MigrationJobCard({
           )}
           {job.status === 'paused' && (
             <>
-              <Button 
-                size="sm" 
+              <Button
+                size="sm"
                 variant="default"
                 className="flex-1"
                 onClick={(e) => handleAction(e, onResume)}
@@ -168,8 +195,8 @@ export function MigrationJobCard({
                 <Play className="h-3 w-3 mr-1" />
                 Resume
               </Button>
-              <Button 
-                size="sm" 
+              <Button
+                size="sm"
                 variant="destructive"
                 onClick={(e) => handleAction(e, onCancel)}
               >

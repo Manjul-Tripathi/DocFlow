@@ -20,6 +20,7 @@ import {
   AlertCircle,
   CheckCircle,
   FileText,
+  ExternalLink,
 } from 'lucide-react';
 import { useLockNotifications } from '@/hooks/useLockNotifications';
 import { formatDistanceToNow } from 'date-fns';
@@ -31,7 +32,8 @@ const notificationIcons = {
   lock_expired: Clock,
   force_unlock: Shield,
   ownership_transferred: UserCheck,
-  access_requested: AlertCircle,
+  access_requested: ExternalLink,
+  share_accessed: ExternalLink,
 };
 
 const notificationColors = {
@@ -40,15 +42,16 @@ const notificationColors = {
   lock_expired: 'text-amber-500',
   force_unlock: 'text-red-500',
   ownership_transferred: 'text-purple-500',
-  access_requested: 'text-orange-500',
+  access_requested: 'text-emerald-500',
+  share_accessed: 'text-emerald-500',
 };
 
 export function LockNotificationsList() {
   const { notifications, unreadCount, isLoading, markAsRead, markAllAsRead } = useLockNotifications();
-  
+
   // Calculate unread count from notifications array as backup
-  const actualUnreadCount = React.useMemo(() => 
-    notifications.filter(n => !n.is_read).length, 
+  const actualUnreadCount = React.useMemo(() =>
+    notifications.filter(n => !n.is_read).length,
     [notifications]
   );
 
