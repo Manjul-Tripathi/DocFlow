@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import {
   Shield,
@@ -14,13 +13,11 @@ import {
   Lock,
   Plus,
   Search,
-  Filter,
   AlertTriangle,
   CheckCircle2,
   Clock,
   FileWarning,
   TrendingUp,
-  Eye,
   Settings,
   Download,
   BarChart3,
@@ -33,14 +30,15 @@ import { useComplianceLabels } from '@/hooks/useComplianceLabels';
 import {
   ComplianceLabel,
   ComplianceFramework,
-  COMPLIANCE_FRAMEWORKS,
-  DATA_CLASSIFICATION_CONFIG,
-  SENSITIVITY_LEVEL_CONFIG
+  COMPLIANCE_FRAMEWORKS
 } from '@/types/compliance';
 import { CreateComplianceLabelDialog } from './CreateComplianceLabelDialog';
+import { EditComplianceLabelDialog } from './EditComplianceLabelDialog';
 import { ComplianceLabelCard } from './ComplianceLabelCard';
 import { ComplianceViolationsPanel } from './ComplianceViolationsPanel';
 import { ComplianceAuditLog } from './ComplianceAuditLog';
+import { ComplianceReports } from './ComplianceReports';
+import { LabeledDocumentsList } from './LabeledDocumentsList';
 
 const frameworkIcons: Record<ComplianceFramework, React.ReactNode> = {
   GDPR: <Shield className="h-4 w-4" />,
@@ -56,11 +54,31 @@ const frameworkIcons: Record<ComplianceFramework, React.ReactNode> = {
 };
 
 export const ComplianceDashboard: React.FC = () => {
-  const { labels, stats, violations, isLoading } = useComplianceLabels();
+  const { labels, stats, violations, deleteLabel } = useComplianceLabels();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFramework, setSelectedFramework] = useState<ComplianceFramework | 'all'>('all');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [selectedLabel, setSelectedLabel] = useState<ComplianceLabel | null>(null);
   const [activeTab, setActiveTab] = useState('labels');
+  const [filterLabelId, setFilterLabelId] = useState<string | undefined>(undefined);
+
+  const handleEditLabel = (label: ComplianceLabel) => {
+    setSelectedLabel(label);
+    setIsEditDialogOpen(true);
+  };
+
+  const handleViewDocuments = (label: ComplianceLabel) => {
+    setFilterLabelId(label.id);
+    setActiveTab('documents');
+  };
+
+  const handleDeleteLabel = async (label: ComplianceLabel) => {
+    if (label.is_system_label) {
+      return; // Cannot delete system labels
+    }
+    await deleteLabel(label.id);
+  };
 
   const filteredLabels = labels.filter(label => {
     const matchesSearch = label.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -70,9 +88,10 @@ export const ComplianceDashboard: React.FC = () => {
   });
 
   const activeViolations = violations.filter(v => !v.resolved);
-  const complianceScore = Math.round(
-    ((stats.labeled_documents / (stats.labeled_documents + stats.unlabeled_documents)) * 100)
-  );
+  const totalDocuments = stats.labeled_documents + stats.unlabeled_documents;
+  const complianceScore = totalDocuments > 0 
+    ? Math.round((stats.labeled_documents / totalDocuments) * 100)
+    : 0;
 
   return (
     <div className="p-6 space-y-6">
@@ -179,7 +198,10 @@ export const ComplianceDashboard: React.FC = () => {
                 <div
                   key={key}
                   className="p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors cursor-pointer"
-                  onClick={() => setSelectedFramework(key)}
+                  onClick={() => {
+                    setSelectedFramework(key);
+                    setActiveTab('documents');
+                  }}
                 >
                   <div className="flex items-center gap-2 mb-2">
                     <div className={`h-8 w-8 rounded-lg ${config.color} flex items-center justify-center text-white`}>
@@ -204,6 +226,15 @@ export const ComplianceDashboard: React.FC = () => {
             <TabsTrigger value="labels" className="gap-2">
               <Shield className="h-4 w-4" />
               Labels
+            </TabsTrigger>
+            <TabsTrigger value="documents" className="gap-2">
+              <FileText className="h-4 w-4" />
+              Documents
+              {stats.labeled_documents > 0 && (
+                <Badge variant="secondary" className="ml-1 h-5 px-1.5">
+                  {stats.labeled_documents}
+                </Badge>
+              )}
             </TabsTrigger>
             <TabsTrigger value="violations" className="gap-2">
               <ShieldAlert className="h-4 w-4" />
@@ -255,8 +286,9 @@ export const ComplianceDashboard: React.FC = () => {
               <ComplianceLabelCard
                 key={label.id}
                 label={label}
-                onEdit={() => {}}
-                onDelete={() => {}}
+                onEdit={handleEditLabel}
+                onDelete={handleDeleteLabel}
+                onViewDocuments={handleViewDocuments}
               />
             ))}
             {filteredLabels.length === 0 && (
@@ -271,6 +303,13 @@ export const ComplianceDashboard: React.FC = () => {
           </div>
         </TabsContent>
 
+        <TabsContent value="documents" className="mt-0">
+          <LabeledDocumentsList 
+            filterFramework={selectedFramework} 
+            filterLabelId={filterLabelId}
+          />
+        </TabsContent>
+
         <TabsContent value="violations" className="mt-0">
           <ComplianceViolationsPanel />
         </TabsContent>
@@ -280,32 +319,19 @@ export const ComplianceDashboard: React.FC = () => {
         </TabsContent>
 
         <TabsContent value="reports" className="mt-0">
-          <Card>
-            <CardContent className="p-12 text-center">
-              <BarChart3 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-medium mb-2">Compliance Reports</h3>
-              <p className="text-muted-foreground mb-4">
-                Generate detailed compliance reports for audits and regulatory requirements
-              </p>
-              <div className="flex justify-center gap-3">
-                <Button variant="outline">
-                  Summary Report
-                </Button>
-                <Button variant="outline">
-                  Data Mapping Report
-                </Button>
-                <Button>
-                  Full Audit Report
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          <ComplianceReports />
         </TabsContent>
       </Tabs>
 
       <CreateComplianceLabelDialog
         open={isCreateDialogOpen}
         onOpenChange={setIsCreateDialogOpen}
+      />
+
+      <EditComplianceLabelDialog
+        open={isEditDialogOpen}
+        onOpenChange={setIsEditDialogOpen}
+        label={selectedLabel}
       />
     </div>
   );

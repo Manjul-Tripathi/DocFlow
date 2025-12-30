@@ -15,6 +15,8 @@ import {
   Search,
   Zap,
   AlertTriangle,
+  Play,
+  FastForward,
 } from 'lucide-react';
 import { useProcessingPipeline, ProcessingQueueItem } from '@/hooks/useProcessingPipeline';
 import { formatDistanceToNow } from 'date-fns';
@@ -22,11 +24,13 @@ import { formatDistanceToNow } from 'date-fns';
 export function ProcessingQueuePanel() {
   const {
     processingQueue,
-    searchQueue,
+    searchQueue: _searchQueue, // Available for future search index features
     loading,
     getQueueStats,
     retryFailed,
     cancelProcessing,
+    simulateProcessing,
+    simulateFullProcessing,
     refresh,
   } = useProcessingPipeline();
 
@@ -181,6 +185,7 @@ export function ProcessingQueuePanel() {
             <div className="text-center py-8 text-muted-foreground">
               <FileText className="h-12 w-12 mx-auto mb-3 opacity-50" />
               <p>No documents in processing queue</p>
+              <p className="text-xs mt-2">Upload documents to see them processed here</p>
             </div>
           ) : (
             <ScrollArea className="h-[400px]">
@@ -191,6 +196,16 @@ export function ProcessingQueuePanel() {
                     className="flex items-center gap-4 p-3 rounded-lg border bg-card"
                   >
                     <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-medium text-sm truncate max-w-[200px]">
+                          {item.documents?.name || item.documents?.file_name || 'Unknown Document'}
+                        </span>
+                        {item.documents?.file_type && (
+                          <Badge variant="outline" className="text-xs">
+                            {item.documents.file_type.toUpperCase()}
+                          </Badge>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2 mb-1">
                         <Badge className={getStageColor(item.stage)}>
                           {item.stage === 'failed' && <XCircle className="h-3 w-3 mr-1" />}
@@ -205,7 +220,7 @@ export function ProcessingQueuePanel() {
                       </div>
                       
                       {item.stage !== 'completed' && item.stage !== 'failed' && (
-                        <Progress value={getStageProgress(item.stage)} className="h-1.5 mt-2" />
+                        <Progress value={item.progress_percent || getStageProgress(item.stage)} className="h-1.5 mt-2" />
                       )}
                       
                       {item.last_error && (
@@ -219,15 +234,45 @@ export function ProcessingQueuePanel() {
                         <span>Attempts: {item.attempts}/{item.max_attempts}</span>
                         <span>•</span>
                         <span>Priority: {item.priority}</span>
+                        {item.stage !== 'uploaded' && item.stage !== 'completed' && item.stage !== 'failed' && (
+                          <>
+                            <span>•</span>
+                            <span>Progress: {item.progress_percent || 0}%</span>
+                          </>
+                        )}
                       </div>
                     </div>
                     
                     <div className="flex items-center gap-1">
+                      {/* Simulate next stage button */}
+                      {item.stage !== 'completed' && item.stage !== 'failed' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => simulateProcessing(item.id)}
+                          title="Advance to next stage"
+                        >
+                          <Play className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {/* Complete all stages button */}
+                      {item.stage !== 'completed' && item.stage !== 'failed' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => simulateFullProcessing(item.id)}
+                          title="Complete all stages"
+                          className="text-green-500 hover:text-green-600"
+                        >
+                          <FastForward className="h-4 w-4" />
+                        </Button>
+                      )}
                       {item.stage === 'failed' && (
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => retryFailed(item.id)}
+                          title="Retry processing"
                         >
                           <RefreshCw className="h-4 w-4" />
                         </Button>
@@ -238,6 +283,7 @@ export function ProcessingQueuePanel() {
                           size="sm"
                           onClick={() => cancelProcessing(item.id)}
                           className="text-destructive hover:text-destructive"
+                          title="Cancel processing"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

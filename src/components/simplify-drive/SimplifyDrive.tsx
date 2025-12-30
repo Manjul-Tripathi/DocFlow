@@ -15,6 +15,7 @@ import {
   OfflineDocumentsPanel, 
   SyncStatusDialog 
 } from '../offline';
+import { SyncNotificationDialog } from '../offline/SyncNotificationDialog';
 import { useDocuments } from './hooks/useDocuments';
 import { useDocumentFiltering } from './hooks/useDocumentFiltering';
 import type { Document, ViewMode, SortOrder } from './types';
@@ -63,7 +64,69 @@ export function SimplifyDrive() {
   const [showSyncDialog, setShowSyncDialog] = useState(false);
 
   const { toast } = useToast();
-  const { status: offlineStatus, syncPendingChanges } = useOfflineMode();
+  const { 
+    status: offlineStatus, 
+    syncPendingChanges,
+    getPendingUploadsData,
+    syncSelectedUploads,
+    closeSyncDialog,
+  } = useOfflineMode();
+
+  // Pending uploads state
+  const [pendingUploads, setPendingUploads] = useState<any[]>([]);
+
+  // Load pending uploads when sync dialog should show
+  React.useEffect(() => {
+    if (offlineStatus.showSyncDialog) {
+      getPendingUploadsData().then(setPendingUploads);
+    }
+  }, [offlineStatus.showSyncDialog, getPendingUploadsData]);
+
+  // Handle sync all pending documents
+  const handleSyncAll = useCallback(async () => {
+    try {
+      const uploads = await getPendingUploadsData();
+      if (uploads.length === 0) {
+        toast({
+          title: "No pending uploads",
+          description: "All documents are already synced",
+        });
+        return;
+      }
+      
+      // Get all upload IDs
+      const allIds = uploads.map(u => u.id);
+      
+      // Sync all
+      await syncSelectedUploads(allIds);
+      
+      // Refetch documents
+      refetch();
+      
+      toast({
+        title: "Sync complete",
+        description: `${uploads.length} document(s) synced successfully`,
+      });
+    } catch (error) {
+      console.error('Sync all failed:', error);
+      toast({
+        title: "Sync failed",
+        description: "Failed to sync documents",
+        variant: "destructive",
+      });
+    }
+  }, [getPendingUploadsData, syncSelectedUploads, refetch, toast]);
+
+  // Listen for document changes and refetch
+  React.useEffect(() => {
+    const handleDocumentsChanged = () => {
+      console.log('📡 Documents changed event received, refetching...');
+      refetch();
+    };
+    
+    window.addEventListener('documents-changed', handleDocumentsChanged);
+    return () => window.removeEventListener('documents-changed', handleDocumentsChanged);
+  }, [refetch]);
 
   // Handlers
   const handleDocumentProcessed = useCallback((documentId: string) => {
@@ -191,7 +254,7 @@ export function SimplifyDrive() {
   const isDocumentsView = activeFeature === 'documents';
 
   return (
-    <div className="min-h-dvh flex flex-col bg-background">
+    <div className="h-screen flex flex-col bg-background overflow-hidden">
       {/* Feature Navigation */}
       <FeatureNavigation 
         activeFeature={activeFeature}
@@ -216,10 +279,10 @@ export function SimplifyDrive() {
           onScan={() => setShowScannerModal(true)}
           onChatbot={() => setShowChatbot(true)}
           onOfflinePanel={() => setShowOfflinePanel(true)}
-          onSync={() => setShowSyncDialog(true)}
+          onSync={handleSyncAll}
           isOnline={offlineStatus.isOnline}
           offlineCount={offlineStatus.offlineDocumentCount}
-          pendingSyncCount={offlineStatus.pendingSyncCount}
+          pendingSyncCount={offlineStatus.pendingUploadCount}
           isSyncing={offlineStatus.isSyncing}
         />
       )}
@@ -294,6 +357,15 @@ export function SimplifyDrive() {
       <SyncStatusDialog
         isOpen={showSyncDialog}
         onClose={() => setShowSyncDialog(false)}
+      />
+
+      {/* Sync Notification Dialog */}
+      <SyncNotificationDialog
+        open={offlineStatus.showSyncDialog}
+        onOpenChange={closeSyncDialog}
+        pendingUploads={pendingUploads}
+        onSync={syncSelectedUploads}
+        onDismiss={closeSyncDialog}
       />
     </div>
   );

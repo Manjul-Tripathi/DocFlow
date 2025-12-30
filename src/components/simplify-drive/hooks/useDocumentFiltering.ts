@@ -27,10 +27,16 @@ export function useDocumentFiltering({
         doc.extracted_text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         doc.insights?.summary?.toLowerCase().includes(searchQuery.toLowerCase());
 
-      // Special handling for recycle-bin and media-browser - don't filter by folder
+      // When a specific folder is selected (not 'all', 'recycle-bin', or 'media-browser'),
+      // the backend already filters documents, so we should not filter again on frontend
+      const isSpecificFolderView = selectedFolder !== 'all' && 
+        selectedFolder !== 'recycle-bin' && 
+        selectedFolder !== 'media-browser';
+      
       const matchesFolder = selectedFolder === 'all' || 
         selectedFolder === 'recycle-bin' ||
         selectedFolder === 'media-browser' ||
+        isSpecificFolderView || // Backend already filtered, accept all
         doc.folders?.some(folder => folder.id === selectedFolder);
 
       const matchesTag = selectedTag === 'all' || 

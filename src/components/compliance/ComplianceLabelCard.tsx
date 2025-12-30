@@ -49,6 +49,7 @@ interface ComplianceLabelCardProps {
   label: ComplianceLabel;
   onEdit: (label: ComplianceLabel) => void;
   onDelete: (label: ComplianceLabel) => void;
+  onViewDocuments?: (label: ComplianceLabel) => void;
   compact?: boolean;
 }
 
@@ -69,6 +70,7 @@ export const ComplianceLabelCard: React.FC<ComplianceLabelCardProps> = ({
   label,
   onEdit,
   onDelete,
+  onViewDocuments,
   compact = false
 }) => {
   const frameworkConfig = COMPLIANCE_FRAMEWORKS[label.framework];
@@ -139,7 +141,7 @@ export const ComplianceLabelCard: React.FC<ComplianceLabelCardProps> = ({
                 <Copy className="h-4 w-4 mr-2" />
                 Duplicate
               </DropdownMenuItem>
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onViewDocuments?.(label)}>
                 <Eye className="h-4 w-4 mr-2" />
                 View Documents
               </DropdownMenuItem>

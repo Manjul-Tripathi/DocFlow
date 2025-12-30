@@ -17,6 +17,8 @@ router = APIRouter(prefix="/editor", tags=["Document Editor"])
 class DocumentContentRequest(BaseModel):
     storage_url: str
     file_type: str
+    document_id: Optional[str] = None  # Optional: if provided, extracted text will be saved
+    version_id: Optional[str] = None  # Optional: if provided, saves to document_versions table
 
 
 class SaveDocumentRequest(BaseModel):
@@ -30,6 +32,7 @@ class DocumentContentResponse(BaseModel):
     content_type: str  # html, text
     success: bool
     error: Optional[str] = None
+    extracted_text: Optional[str] = None  # Plain text for saving to DB
 
 
 @router.post("/extract-content", response_model=DocumentContentResponse)
@@ -37,6 +40,7 @@ async def extract_document_content(request: DocumentContentRequest):
     """
     Extract content from a document URL and return as HTML/text for editing.
     Supports: PDF, DOCX, DOC, TXT, RTF
+    If document_id provided, extracts and saves plain text to database.
     """
     try:
         # Download the file from storage URL
@@ -54,25 +58,30 @@ async def extract_document_content(request: DocumentContentRequest):
         file_type = request.file_type.lower()
         content = ""
         content_type = "html"
+        extracted_text = ""
 
         # Extract content based on file type
         if "pdf" in file_type:
             content = await extract_pdf_content(file_bytes)
+            extracted_text = content  # For PDF, we already get text
         elif "doc" in file_type or "word" in file_type:
             content = await extract_word_content(file_bytes)
+            extracted_text = content
         elif "txt" in file_type or "text" in file_type:
-            content = file_bytes.decode('utf-8', errors='ignore')
-            content = f"<p>{content.replace(chr(10)+chr(10), '</p><p>').replace(chr(10), '<br/>')}</p>"
+            extracted_text = file_bytes.decode('utf-8', errors='ignore')
+            content = f"<p>{extracted_text.replace(chr(10)+chr(10), '</p><p>').replace(chr(10), '<br/>')}</p>"
         elif "rtf" in file_type:
             content = await extract_rtf_content(file_bytes)
+            extracted_text = content
         elif "html" in file_type:
             content = file_bytes.decode('utf-8', errors='ignore')
+            extracted_text = content
             content_type = "html"
         else:
             # Try to decode as text
             try:
-                content = file_bytes.decode('utf-8', errors='ignore')
-                content = f"<p>{content.replace(chr(10)+chr(10), '</p><p>').replace(chr(10), '<br/>')}</p>"
+                extracted_text = file_bytes.decode('utf-8', errors='ignore')
+                content = f"<p>{extracted_text.replace(chr(10)+chr(10), '</p><p>').replace(chr(10), '<br/>')}</p>"
             except:
                 return DocumentContentResponse(
                     content="",
@@ -81,10 +90,36 @@ async def extract_document_content(request: DocumentContentRequest):
                     error=f"Unsupported file type: {file_type}"
                 )
 
+        # Strip HTML tags from extracted text for database storage
+        import re
+        plain_text = re.sub('<[^<]+?>', '', extracted_text).strip()
+
+        # Save extracted text to database if document_id provided
+        if request.document_id and plain_text:
+            try:
+                from app.core.supabase_client import supabase
+                
+                # Update documents table with extracted_text
+                doc_update = supabase.table('documents').update({
+                    'extracted_text': plain_text
+                }).eq('id', request.document_id).execute()
+                
+                # If version_id provided, also update document_versions
+                if request.version_id:
+                    version_update = supabase.table('document_versions').update({
+                        'content': plain_text
+                    }).eq('id', request.version_id).execute()
+                    logger.info(f"Saved extracted text to document_versions: {request.version_id}")
+                
+                logger.info(f"Saved {len(plain_text)} chars of extracted text to document: {request.document_id}")
+            except Exception as save_error:
+                logger.warning(f"Could not save extracted text to database: {save_error}")
+
         return DocumentContentResponse(
             content=content,
             content_type=content_type,
-            success=True
+            success=True,
+            extracted_text=plain_text
         )
 
     except Exception as e:
@@ -107,7 +142,9 @@ async def extract_pdf_content(file_bytes: bytes) -> str:
         
         for page_num in range(len(doc)):
             page = doc[page_num]
-            text = page.get_text()
+            # Use "text" extraction with sort=True for consistent reading order
+            # This ensures the same text is extracted regardless of PDF internal structure
+            text = page.get_text("text", sort=True)
             
             if text.strip():
                 # Convert text to HTML paragraphs
@@ -149,6 +186,28 @@ async def extract_pdf_content(file_bytes: bytes) -> str:
     except Exception as e:
         logger.error(f"PDF extraction error: {e}")
         return f"<p>Error extracting PDF content: {str(e)}</p>"
+
+
+def extract_pdf_plain_text(file_bytes: bytes) -> str:
+    """Extract plain text from PDF for version comparison (consistent extraction)"""
+    try:
+        import fitz
+        
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        text_parts = []
+        
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            # Use sort=True for consistent reading order across extractions
+            text = page.get_text("text", sort=True)
+            if text.strip():
+                text_parts.append(text.strip())
+        
+        doc.close()
+        return "\n\n".join(text_parts)
+    except Exception as e:
+        logger.error(f"Plain text extraction error: {e}")
+        return ""
 
 
 async def extract_word_content(file_bytes: bytes) -> str:
@@ -471,6 +530,37 @@ async def save_document_to_supabase(document_id: str, file_bytes: bytes, file_na
         current_version = doc.get('metadata', {}).get('current_version', 1) if doc.get('metadata') else 1
         new_version = current_version + 1
         
+        # Extract text from the new file for documents.extracted_text (used for chatbot embeddings)
+        extracted_text = None
+        plain_text_for_version = None  # Separate plain text for version comparison
+        try:
+            file_type = doc.get('file_type', '').lower()
+            if 'pdf' in file_type:
+                extracted_text = await extract_pdf_content(file_bytes)
+                plain_text_for_version = extract_pdf_plain_text(file_bytes)  # Consistent extraction for versions
+            elif 'doc' in file_type or 'word' in file_type:
+                extracted_text = await extract_word_content(file_bytes)
+            elif 'rtf' in file_type:
+                extracted_text = await extract_rtf_content(file_bytes)
+            else:
+                try:
+                    extracted_text = file_bytes.decode('utf-8', errors='ignore')
+                except:
+                    pass
+            
+            # Strip HTML tags for plain text storage in documents table
+            if extracted_text:
+                import re
+                extracted_text = re.sub('<[^<]+?>', '', extracted_text).strip()
+                logger.info(f"Extracted {len(extracted_text)} chars from edited document")
+            
+            # Use plain_text_for_version if available, otherwise use extracted_text
+            if not plain_text_for_version:
+                plain_text_for_version = extracted_text
+                
+        except Exception as extract_error:
+            logger.warning(f"Could not extract text from edited document: {extract_error}")
+        
         # Update document metadata with new version
         updated_metadata = doc.get('metadata') or {}
         updated_metadata['current_version'] = new_version
@@ -485,13 +575,41 @@ async def save_document_to_supabase(document_id: str, file_bytes: bytes, file_na
             'source': 'onlyoffice_edit'
         })
         
-        # Update the document record
-        update_result = supabase.table('documents').update({
+        # Build update data - always update extracted_text with latest version for chatbot
+        update_data = {
             'storage_path': storage_path,
             'file_size': len(file_bytes),
             'metadata': updated_metadata,
             'updated_at': datetime.now().isoformat()
-        }).eq('id', document_id).execute()
+        }
+        if extracted_text:
+            update_data['extracted_text'] = extracted_text
+        
+        # Update the document record
+        update_result = supabase.table('documents').update(update_data).eq('id', document_id).execute()
+        
+        # Also insert into document_versions table for version comparison feature
+        try:
+            version_record = {
+                'id': str(uuid.uuid4()),
+                'document_id': document_id,
+                'version_number': new_version,
+                'content': plain_text_for_version or extracted_text or storage_path,  # Use plain text for consistent comparison
+                'change_summary': f'Edited via OnlyOffice (v{new_version})',
+                'created_by': user_id,
+                'major_version': new_version,
+                'minor_version': 0,
+            }
+            
+            version_result = supabase.table('document_versions').insert(version_record).execute()
+            
+            if version_result.data:
+                logger.info(f"Created document_versions record for v{new_version} with {'plain text' if plain_text_for_version else 'extracted text' if extracted_text else 'storage path'}")
+            else:
+                logger.warning(f"Failed to create document_versions record: {version_result}")
+        except Exception as version_error:
+            # Log but don't fail - the main document save was successful
+            logger.warning(f"Could not create document_versions record: {version_error}")
         
         if update_result.data:
             logger.info(f"Document {document_id} saved as v{new_version}")
@@ -503,6 +621,7 @@ async def save_document_to_supabase(document_id: str, file_bytes: bytes, file_na
     except Exception as e:
         logger.error(f"Error saving to Supabase: {e}")
         return False
+
 
 
 @router.post("/onlyoffice-callback")

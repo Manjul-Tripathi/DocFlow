@@ -1069,11 +1069,21 @@ async def get_documents_in_folder(folder_id: str):
         folder = folder_resp.data
         logger.info(f"Found folder: {folder['name']} with {folder.get('document_count', 0)} documents")
 
-        # Get document IDs from shortcuts
+        # Get document IDs from both shortcuts and folder relationships
         logger.info(f"Fetching document shortcuts for folder: {folder_id}")
         shortcuts_resp = supabase.table('document_shortcuts').select('document_id').eq('folder_id', folder_id).execute()
-        document_ids = [s['document_id'] for s in (shortcuts_resp.data or [])]
-        logger.info(f"Found {len(document_ids)} document shortcuts: {document_ids}")
+        shortcut_ids = [s['document_id'] for s in (shortcuts_resp.data or [])]
+        logger.info(f"Found {len(shortcut_ids)} document shortcuts")
+        
+        # Also get documents from document_folder_relationships (smart folder assignments)
+        logger.info(f"Fetching document folder relationships for folder: {folder_id}")
+        relationships_resp = supabase.table('document_folder_relationships').select('document_id').eq('folder_id', folder_id).execute()
+        relationship_ids = [r['document_id'] for r in (relationships_resp.data or [])]
+        logger.info(f"Found {len(relationship_ids)} document relationships")
+        
+        # Combine and deduplicate document IDs
+        document_ids = list(set(shortcut_ids + relationship_ids))
+        logger.info(f"Total unique documents: {len(document_ids)}")
 
         documents = []
         total_size = 0

@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { useOfflineMode } from '@/hooks/useOfflineMode';
 import { CameraCapture } from "../CameraCapture";
 import { API_BASE_URL } from "@/config/api";
 import { autoClassifyDocument } from "@/services/autoClassificationService";
@@ -62,6 +63,7 @@ export const EnhancedDocumentUpload: React.FC<EnhancedDocumentUploadProps> = ({
   onAllComplete
 }) => {
   const { applyRulesToDocument } = useContentAccessRules();
+  const { status: offlineStatus, queueOfflineUpload } = useOfflineMode();
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -149,11 +151,70 @@ export const EnhancedDocumentUpload: React.FC<EnhancedDocumentUploadProps> = ({
 
   const uploadSingleFile = async (uploadFile: UploadFile): Promise<string | null> => {
     try {
+      // Check if offline or Supabase is unreachable first
+      if (!offlineStatus.isOnline || !navigator.onLine) {
+        // Queue for offline upload
+        const queueId = await queueOfflineUpload(uploadFile.file, {
+          enableRAG,
+          enableClassification,
+        });
+        
+        if (queueId) {
+          updateFileStatus(uploadFile.id, { 
+            status: 'complete', 
+            progress: 100,
+            documentId: queueId 
+          });
+          return queueId;
+        } else {
+          throw new Error('Failed to queue offline upload');
+        }
+      }
+
       updateFileStatus(uploadFile.id, { status: 'uploading', progress: 10 });
 
-      const { data: user } = await supabase.auth.getUser();
-      if (!user.user) {
-        throw new Error('User not authenticated');
+      // Try to get user, but handle auth failures gracefully
+      let user;
+      try {
+        const { data: userData, error: authError } = await supabase.auth.getUser();
+        if (authError || !userData.user) {
+          // If auth fails, queue for offline upload
+          console.warn('Authentication failed, queuing for offline upload:', authError);
+          const queueId = await queueOfflineUpload(uploadFile.file, {
+            enableRAG,
+            enableClassification,
+          });
+          
+          if (queueId) {
+            updateFileStatus(uploadFile.id, { 
+              status: 'complete', 
+              progress: 100,
+              documentId: queueId 
+            });
+            return queueId;
+          } else {
+            throw new Error('User not authenticated and offline queue failed');
+          }
+        }
+        user = userData;
+      } catch (authError) {
+        // Network error or auth service unreachable - queue offline
+        console.warn('Auth service unreachable, queuing for offline upload:', authError);
+        const queueId = await queueOfflineUpload(uploadFile.file, {
+          enableRAG,
+          enableClassification,
+        });
+        
+        if (queueId) {
+          updateFileStatus(uploadFile.id, { 
+            status: 'complete', 
+            progress: 100,
+            documentId: queueId 
+          });
+          return queueId;
+        } else {
+          throw new Error('Auth service unreachable and offline queue failed');
+        }
       }
 
       // Upload file to storage
@@ -270,6 +331,30 @@ export const EnhancedDocumentUpload: React.FC<EnhancedDocumentUploadProps> = ({
 
         documentData = insertedData;
         console.log('Document saved by frontend (simple upload):', documentData?.id);
+
+        // Create Version 1 record
+        try {
+          const { error: versionError } = await supabase
+            .from('document_versions')
+            .insert({
+              document_id: documentData.id,
+              version_number: 1,
+              content: uploadData.path,
+              change_summary: 'Initial upload',
+              created_by: user.user.id,
+              major_version: 1,
+              minor_version: 0,
+            });
+
+          if (versionError) {
+            console.warn('Could not create initial version record:', versionError);
+          } else {
+            console.log('Created version 1 record for document:', documentData.id);
+          }
+        } catch (versionCreationError) {
+          console.warn('Error creating version record:', versionCreationError);
+        }
+
       }
 
       updateFileStatus(uploadFile.id, { progress: 75 });

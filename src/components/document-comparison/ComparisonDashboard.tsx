@@ -12,6 +12,7 @@ import {
   FolderOpen,
   Loader2,
   CheckCircle2,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -38,6 +39,7 @@ import { useDocumentVersions } from '@/hooks/useDocumentVersions';
 import { DocumentComparisonDialog } from './DocumentComparisonDialog';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 import type { VersionComparison } from '@/types/versionControl';
 
 interface ComparisonDashboardProps {
@@ -65,11 +67,13 @@ interface ComparisonHistory {
   doc1Id?: string;
   doc2Id?: string;
   comparisonData?: VersionComparison;
+  aiAnalysisText?: string; // Store the AI analysis text
 }
 
 type ComparisonMode = 'versions' | 'documents' | 'ai';
 
 export function ComparisonDashboard({ documents = [] }: ComparisonDashboardProps) {
+  const { user } = useAuth();
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [selectedBaseVersion, setSelectedBaseVersion] = useState<string | null>(null);
   const [selectedCompareVersion, setSelectedCompareVersion] = useState<string | null>(null);
@@ -101,15 +105,74 @@ export function ComparisonDashboard({ documents = [] }: ComparisonDashboardProps
     }
   };
 
-  // Comparison history from localStorage
-  const [comparisonHistory, setComparisonHistory] = useState<ComparisonHistory[]>(() => {
-    try {
-      const saved = localStorage.getItem('comparison_history');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Comparison history from database
+  const [comparisonHistory, setComparisonHistory] = useState<ComparisonHistory[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  // Load comparison history from database (with localStorage fallback)
+  React.useEffect(() => {
+    const loadHistory = async () => {
+      if (!user?.id) return;
+      
+      setIsLoadingHistory(true);
+      try {
+        const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+        const response = await fetch(`${BACKEND_URL}/api/ai/history/${user.id}?limit=50`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          
+          // If we have data from database, use it
+          if (data && data.length > 0) {
+            // Transform backend data to match ComparisonHistory interface
+            const transformed = data.map((item: any) => ({
+              id: item.id,
+              documentName: item.document_name,
+              baseVersion: item.base_version,
+              compareVersion: item.compare_version,
+              timestamp: item.created_at,
+              changesCount: item.changes_count,
+              type: item.comparison_type,
+              documentId: item.document_id,
+              baseVersionId: item.base_version_id,
+              compareVersionId: item.compare_version_id,
+              doc1Id: item.doc1_id,
+              doc2Id: item.doc2_id,
+              comparisonData: item.comparison_data,
+              aiAnalysisText: item.ai_analysis_text,
+            }));
+            setComparisonHistory(transformed);
+            return;
+          }
+        }
+        
+        // Fallback to localStorage if no database data
+        const saved = localStorage.getItem('comparison_history');
+        if (saved) {
+          const localHistory = JSON.parse(saved);
+          setComparisonHistory(localHistory);
+          console.log('Loaded history from localStorage (database was empty)');
+        }
+      } catch (error) {
+        console.error('Failed to load comparison history from database:', error);
+        // Fallback to localStorage on error
+        try {
+          const saved = localStorage.getItem('comparison_history');
+          if (saved) {
+            const localHistory = JSON.parse(saved);
+            setComparisonHistory(localHistory);
+            console.log('Loaded history from localStorage (fallback)');
+          }
+        } catch {
+          console.error('Failed to load from localStorage as well');
+        }
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    };
+
+    loadHistory();
+  }, [user?.id]);
 
   const { versions, compareVersions, isLoading } = useDocumentVersions({
     documentId: selectedDocumentId || '',
@@ -123,21 +186,76 @@ export function ComparisonDashboard({ documents = [] }: ComparisonDashboardProps
     );
   }, [documents, searchTerm]);
 
-  const saveToHistory = useCallback((item: Omit<ComparisonHistory, 'id' | 'timestamp'>, comparisonResult?: VersionComparison) => {
-    const newItem: ComparisonHistory = {
-      ...item,
-      id: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-      comparisonData: comparisonResult,
-    };
-    const updated = [newItem, ...comparisonHistory].slice(0, 20); // Keep last 20
-    setComparisonHistory(updated);
-    localStorage.setItem('comparison_history', JSON.stringify(updated));
-  }, [comparisonHistory]);
+  const saveToHistory = useCallback(async (item: Omit<ComparisonHistory, 'id' | 'timestamp'>, comparisonResult?: VersionComparison) => {
+    if (!user?.id) return;
+
+    try {
+      const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+      const response = await fetch(`${BACKEND_URL}/api/ai/save-comparison`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: user.id,
+          document_id: item.documentId,
+          document_name: item.documentName,
+          comparison_type: item.type,
+          base_version: item.baseVersion,
+          compare_version: item.compareVersion,
+          changes_count: item.changesCount,
+          base_version_id: item.baseVersionId,
+          compare_version_id: item.compareVersionId,
+          doc1_id: item.doc1Id,
+          doc2_id: item.doc2Id,
+          comparison_data: comparisonResult,
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        // Add to local state immediately
+        const newItem: ComparisonHistory = {
+          ...item,
+          id: result.id,
+          timestamp: new Date().toISOString(),
+          comparisonData: comparisonResult,
+        };
+        setComparisonHistory(prev => [newItem, ...prev]);
+      }
+    } catch (error) {
+      console.error('Failed to save comparison to history:', error);
+      toast.error('Failed to save comparison to history');
+    }
+  }, [user?.id]);
 
   // Handler to replay a comparison from history
   const handleReplayComparison = useCallback(async (historyItem: ComparisonHistory) => {
     try {
+      // For AI analysis type, show the saved AI analysis
+      if (historyItem.type === 'ai') {
+        if (historyItem.aiAnalysisText) {
+          setAiAnalysisResult(historyItem.aiAnalysisText);
+          setShowAiResultDialog(true);
+          toast.success('AI analysis loaded from history');
+          return;
+        } else if (user && historyItem.baseVersionId && historyItem.compareVersionId) {
+          // Try to fetch from backend
+          const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+          const cachedResponse = await fetch(
+            `${BACKEND_URL}/api/ai/comparison?user_id=${user.id}&base_version_id=${historyItem.baseVersionId}&compare_version_id=${historyItem.compareVersionId}`
+          );
+          
+          if (cachedResponse.ok) {
+            const cachedData = await cachedResponse.json();
+            if (cachedData && cachedData.analysis_text) {
+              setAiAnalysisResult(cachedData.analysis_text);
+              setShowAiResultDialog(true);
+              toast.success('AI analysis loaded from database');
+              return;
+            }
+          }
+        }
+      }
+      
       // If we have cached comparison data, use it directly
       if (historyItem.comparisonData) {
         setComparison(historyItem.comparisonData);
@@ -171,7 +289,7 @@ export function ComparisonDashboard({ documents = [] }: ComparisonDashboardProps
       console.error('Failed to replay comparison:', error);
       toast.error('Failed to replay comparison');
     }
-  }, []);
+  }, [user]);
 
   const handleSelectDocument = (docId: string) => {
     if (comparisonMode === 'versions' || comparisonMode === 'ai') {
@@ -215,19 +333,93 @@ export function ComparisonDashboard({ documents = [] }: ComparisonDashboardProps
       const doc1 = documents.find(d => d.id === selectedDoc1);
       const doc2 = documents.find(d => d.id === selectedDoc2);
 
-      // Fetch both documents' content
+      // Fetch both documents' data
       const [doc1Data, doc2Data] = await Promise.all([
-        supabase.from('documents').select('extracted_text, metadata').eq('id', selectedDoc1).single(),
-        supabase.from('documents').select('extracted_text, metadata').eq('id', selectedDoc2).single(),
+        supabase.from('documents').select('extracted_text, metadata, storage_path, file_name, file_type').eq('id', selectedDoc1).single(),
+        supabase.from('documents').select('extracted_text, metadata, storage_path, file_name, file_type').eq('id', selectedDoc2).single(),
       ]);
 
-      const text1 = doc1Data.data?.extracted_text || '';
-      const text2 = doc2Data.data?.extracted_text || '';
+      let text1 = doc1Data.data?.extracted_text || '';
+      let text2 = doc2Data.data?.extracted_text || '';
+
+      const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+
+      // Function to extract text from document via backend
+      const extractTextFromDoc = async (storagePath: string, fileName: string, fileType: string): Promise<string> => {
+        try {
+          // Get signed URL for the document
+          const { data: signedData } = await supabase.storage
+            .from('documents')
+            .createSignedUrl(storagePath, 300);
+          
+          if (!signedData?.signedUrl) {
+            console.warn('Could not get signed URL for document:', fileName);
+            return '';
+          }
+
+          // Call backend to extract content from document
+          const response = await fetch(`${BACKEND_URL}/api/editor/extract-content`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              storage_url: signedData.signedUrl,
+              file_type: fileType
+            }),
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            if (result.success && result.content) {
+              // Strip HTML tags for plain text comparison
+              const tempDiv = document.createElement('div');
+              tempDiv.innerHTML = result.content;
+              return tempDiv.textContent || tempDiv.innerText || '';
+            }
+          }
+          
+          return '';
+        } catch (error) {
+          console.error('Error extracting text:', error);
+          return '';
+        }
+      };
+
+      // Extract text if not already available
+      if (!text1 && doc1Data.data?.storage_path) {
+        toast.info('Extracting text from first document...');
+        text1 = await extractTextFromDoc(
+          doc1Data.data.storage_path, 
+          doc1Data.data.file_name || 'Document 1',
+          doc1Data.data.file_type || 'application/octet-stream'
+        );
+      }
+      if (!text2 && doc2Data.data?.storage_path) {
+        toast.info('Extracting text from second document...');
+        text2 = await extractTextFromDoc(
+          doc2Data.data.storage_path, 
+          doc2Data.data.file_name || 'Document 2',
+          doc2Data.data.file_type || 'application/octet-stream'
+        );
+      }
+
+      // Check if we have content to compare
+      if (!text1 && !text2) {
+        toast.error('Could not extract text from documents. Please ensure documents have been processed.');
+        setIsComparingDocs(false);
+        return;
+      }
+
+      if (!text1) {
+        toast.warning('Could not extract text from first document. Using empty content.');
+      }
+      if (!text2) {
+        toast.warning('Could not extract text from second document. Using empty content.');
+      }
 
       // Create a comparison result
       const diffs = [];
-      const lines1 = text1.split('\n');
-      const lines2 = text2.split('\n');
+      const lines1 = text1.split('\n').filter(l => l.trim());
+      const lines2 = text2.split('\n').filter(l => l.trim());
 
       let addedCount = 0, removedCount = 0, modifiedCount = 0;
 
@@ -309,14 +501,50 @@ export function ComparisonDashboard({ documents = [] }: ComparisonDashboardProps
 
   const handleAIAnalysis = async () => {
     if (!selectedBaseVersion || !selectedCompareVersion) return;
+    if (!user) {
+      toast.error('Please sign in to use AI analysis');
+      return;
+    }
 
     setIsAnalyzing(true);
     try {
+      // First, check if we have a cached analysis
+      const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+      
+      const cachedResponse = await fetch(
+        `${BACKEND_URL}/api/ai/comparison?user_id=${user.id}&base_version_id=${selectedBaseVersion}&compare_version_id=${selectedCompareVersion}`
+      );
+      
+      if (cachedResponse.ok) {
+        const cachedData = await cachedResponse.json();
+        if (cachedData && cachedData.analysis_text) {
+          setAiAnalysisResult(cachedData.analysis_text);
+          setShowAiResultDialog(true);
+          
+          const result = await compareVersions(selectedBaseVersion, selectedCompareVersion);
+          const doc = documents.find(d => d.id === selectedDocumentId);
+          saveToHistory({
+            documentName: doc?.file_name || 'Unknown',
+            baseVersion: `v${result.baseVersion.major_version}.${result.baseVersion.minor_version}`,
+            compareVersion: `v${result.compareVersion.major_version}.${result.compareVersion.minor_version}`,
+            changesCount: result.summary.added + result.summary.removed + result.summary.modified,
+            type: 'ai',
+            documentId: selectedDocumentId || undefined,
+            baseVersionId: selectedBaseVersion,
+            compareVersionId: selectedCompareVersion,
+            aiAnalysisText: cachedData.analysis_text,
+          }, result);
+          
+          toast.success('AI analysis loaded from cache');
+          setIsAnalyzing(false);
+          return;
+        }
+      }
+      
+      // No cached analysis, generate new one
       const result = await compareVersions(selectedBaseVersion, selectedCompareVersion);
 
       // Call AI to analyze the changes
-      const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
-
       const prompt = `Analyze the following document version changes and provide a detailed summary:
 
 Changes Summary:
@@ -339,6 +567,16 @@ Please provide:
         body: JSON.stringify({
           prompt,
           context: 'document_comparison',
+          user_id: user.id,
+          document_id: selectedDocumentId,
+          document_name: documents.find(d => d.id === selectedDocumentId)?.file_name || 'Unknown',
+          comparison_type: 'ai',
+          base_version: `v${result.baseVersion.major_version}.${result.baseVersion.minor_version}`,
+          compare_version: `v${result.compareVersion.major_version}.${result.compareVersion.minor_version}`,
+          base_version_id: selectedBaseVersion,
+          compare_version_id: selectedCompareVersion,
+          changes_count: result.summary.added + result.summary.removed + result.summary.modified,
+          comparison_data: result,
         }),
       });
 
@@ -378,17 +616,30 @@ ${result.diffs.filter(d => d.type !== 'unchanged').slice(0, 10).map(d =>
       setAiAnalysisResult(analysisText);
       setShowAiResultDialog(true);
 
-      const doc = documents.find(d => d.id === selectedDocumentId);
-      saveToHistory({
-        documentName: doc?.file_name || 'Unknown',
-        baseVersion: `v${result.baseVersion.major_version}.${result.baseVersion.minor_version}`,
-        compareVersion: `v${result.compareVersion.major_version}.${result.compareVersion.minor_version}`,
-        changesCount: result.summary.added + result.summary.removed + result.summary.modified,
-        type: 'ai',
-        documentId: selectedDocumentId || undefined,
-        baseVersionId: selectedBaseVersion,
-        compareVersionId: selectedCompareVersion,
-      }, result);
+      // Reload history to show the new AI analysis entry saved by backend
+      if (user?.id) {
+        const historyResponse = await fetch(`${BACKEND_URL}/api/ai/history/${user.id}?limit=50`);
+        if (historyResponse.ok) {
+          const data = await historyResponse.json();
+          const transformed = data.map((item: any) => ({
+            id: item.id,
+            documentName: item.document_name,
+            baseVersion: item.base_version,
+            compareVersion: item.compare_version,
+            timestamp: item.created_at,
+            changesCount: item.changes_count,
+            type: item.comparison_type,
+            documentId: item.document_id,
+            baseVersionId: item.base_version_id,
+            compareVersionId: item.compare_version_id,
+            doc1Id: item.doc1_id,
+            doc2Id: item.doc2_id,
+            comparisonData: item.comparison_data,
+            aiAnalysisText: item.ai_analysis_text,
+          }));
+          setComparisonHistory(transformed);
+        }
+      }
 
       toast.success('AI analysis complete');
     } catch (error) {
@@ -805,7 +1056,19 @@ ${result.diffs.filter(d => d.type !== 'unchanged').slice(0, 10).map(d =>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => {
+                onClick={async () => {
+                  if (!user?.id) return;
+                  // Delete all from database
+                  try {
+                    const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+                    for (const item of comparisonHistory) {
+                      await fetch(`${BACKEND_URL}/api/ai/history/${item.id}?user_id=${user.id}`, {
+                        method: 'DELETE',
+                      });
+                    }
+                  } catch (err) {
+                    console.error('Error clearing from database:', err);
+                  }
                   setComparisonHistory([]);
                   localStorage.removeItem('comparison_history');
                   toast.success('History cleared');
@@ -826,13 +1089,15 @@ ${result.diffs.filter(d => d.type !== 'unchanged').slice(0, 10).map(d =>
           ) : (
             <div className="space-y-2">
               {comparisonHistory.map((item) => (
-                <button
+                <div
                   key={item.id}
-                  type="button"
-                  onClick={() => handleReplayComparison(item)}
-                  className="w-full flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors cursor-pointer text-left"
+                  className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors group"
                 >
-                  <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleReplayComparison(item)}
+                    className="flex-1 flex items-center gap-3 cursor-pointer text-left"
+                  >
                     <div className={cn(
                       "p-2 rounded-lg",
                       item.type === 'version' && "bg-primary/10",
@@ -858,14 +1123,47 @@ ${result.diffs.filter(d => d.type !== 'unchanged').slice(0, 10).map(d =>
                         </Badge>
                       </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-3">
+                  </button>
+                  <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">
                       {formatSafeDate(item.timestamp)}
                     </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!user?.id) return;
+                        try {
+                          const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+                          const response = await fetch(`${BACKEND_URL}/api/ai/history/${item.id}?user_id=${user.id}`, {
+                            method: 'DELETE',
+                          });
+                          if (response.ok) {
+                            setComparisonHistory(prev => prev.filter(h => h.id !== item.id));
+                            // Also remove from localStorage
+                            const saved = localStorage.getItem('comparison_history');
+                            if (saved) {
+                              const localHistory = JSON.parse(saved);
+                              const updated = localHistory.filter((h: any) => h.id !== item.id);
+                              localStorage.setItem('comparison_history', JSON.stringify(updated));
+                            }
+                            toast.success('Comparison deleted');
+                          } else {
+                            toast.error('Failed to delete comparison');
+                          }
+                        } catch (err) {
+                          console.error('Error deleting comparison:', err);
+                          toast.error('Failed to delete comparison');
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </div>
-                </button>
+                </div>
               ))}
             </div>
           )}
@@ -948,7 +1246,7 @@ ${result.diffs.filter(d => d.type !== 'unchanged').slice(0, 10).map(d =>
               Intelligent summary of document changes
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="flex-1 pr-4">
+          <ScrollArea className="h-[60vh] pr-4 scrollbar-hide">
             <div className="prose prose-sm dark:prose-invert max-w-none">
               {aiAnalysisResult?.split('\n').map((line, i) => {
                 if (line.startsWith('## ')) {

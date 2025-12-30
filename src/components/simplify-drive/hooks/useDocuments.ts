@@ -49,7 +49,11 @@ export function useDocuments(options: UseDocumentsOptions = {}) {
         updated_at: doc.updated_at,
         extracted_text: doc.extracted_text || '',
         processing_status: doc.processing_status || 'completed',
-        metadata: { ...doc.metadata, is_offline: true },
+        metadata: { 
+          ...doc.metadata, 
+          is_offline: true,
+          is_pending_upload: doc.metadata?.is_pending_upload || false,
+        },
         storage_url: doc.storage_url,
         storage_path: undefined,
         insights: undefined,
@@ -57,14 +61,22 @@ export function useDocuments(options: UseDocumentsOptions = {}) {
         folders: []
       }));
       
-      console.log('📴 Loaded', processedDocuments.length, 'offline documents');
+      console.log('📴 Loaded', processedDocuments.length, 'offline documents (including pending uploads)');
       setDocuments(processedDocuments);
       
       if (processedDocuments.length > 0) {
-        toast({
-          title: "Offline Mode",
-          description: `Showing ${processedDocuments.length} cached documents`,
-        });
+        const pendingCount = processedDocuments.filter(d => d.metadata?.is_pending_upload).length;
+        if (pendingCount > 0) {
+          toast({
+            title: "Offline Mode",
+            description: `${pendingCount} document(s) queued for upload. ${processedDocuments.length - pendingCount} cached documents available.`,
+          });
+        } else {
+          toast({
+            title: "Offline Mode",
+            description: `Showing ${processedDocuments.length} cached documents`,
+          });
+        }
       }
     } catch (error) {
       console.error('Error fetching offline documents:', error);
@@ -290,7 +302,47 @@ export function useDocuments(options: UseDocumentsOptions = {}) {
       });
       console.log('📊 useDocuments: Processed documents count:', processedDocuments.length);
       console.log('📊 useDocuments: Sample document:', processedDocuments[0]);
-      setDocuments(processedDocuments);
+      
+      // Also fetch pending uploads from IndexedDB (even when online)
+      // so they remain visible with "Queued for Upload" badge
+      try {
+        const offlineDocs = await getAllOfflineDocuments();
+        const pendingUploads = offlineDocs.filter(doc => doc.metadata?.is_pending_upload);
+        
+        if (pendingUploads.length > 0) {
+          console.log('📤 Found', pendingUploads.length, 'pending uploads in IndexedDB');
+          
+          // Convert to Document format
+          const pendingDocuments: Document[] = pendingUploads.map((doc) => ({
+            id: doc.id,
+            file_name: doc.file_name,
+            file_type: doc.file_type,
+            file_size: doc.file_size,
+            created_at: doc.created_at,
+            updated_at: doc.updated_at,
+            extracted_text: doc.extracted_text || '',
+            processing_status: 'pending',
+            metadata: { 
+              ...doc.metadata, 
+              is_pending_upload: true,
+            },
+            storage_url: doc.storage_url,
+            storage_path: undefined,
+            insights: undefined,
+            tags: [],
+            folders: []
+          }));
+          
+          // Merge with Supabase documents (pending uploads first)
+          setDocuments([...pendingDocuments, ...processedDocuments]);
+        } else {
+          setDocuments(processedDocuments);
+        }
+      } catch (offlineError) {
+        console.warn('Could not fetch pending uploads from IndexedDB:', offlineError);
+        setDocuments(processedDocuments);
+      }
+      
       setLoading(false);
     } catch (error) {
       console.error('Error fetching from server:', error);

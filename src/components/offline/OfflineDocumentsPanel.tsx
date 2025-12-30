@@ -28,7 +28,9 @@ import {
   Clock,
   Loader2,
   X,
+  CloudUpload,
 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useOfflineMode } from '@/hooks/useOfflineMode';
 import { formatFileSize } from '@/utils/formatters';
 import type { OfflineDocument } from '@/services/offlineStorage';
@@ -48,12 +50,15 @@ export function OfflineDocumentsPanel({
     status,
     getOfflineDocuments,
     removeDocumentFromOffline,
-    syncPendingChanges,
     clearOfflineData,
     refreshStats,
+    getPendingUploadsData,
+    syncSelectedUploads,
   } = useOfflineMode();
 
   const [documents, setDocuments] = useState<OfflineDocument[]>([]);
+  const [pendingUploads, setPendingUploads] = useState<any[]>([]);
+  const [selectedUploads, setSelectedUploads] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
@@ -62,31 +67,75 @@ export function OfflineDocumentsPanel({
     setLoading(true);
     try {
       const docs = await getOfflineDocuments();
-      setDocuments(docs);
+      console.log('📦 All offline documents:', docs.length, docs);
+      
+      // Separate pending uploads from regular offline documents
+      const pendingDocs = docs.filter(doc => doc.metadata?.is_pending_upload === true);
+      const regularDocs = docs.filter(doc => !doc.metadata?.is_pending_upload);
+      
+      setDocuments(regularDocs);
+      console.log('📦 Regular offline documents:', regularDocs.length);
+      
+      // Convert pending docs to upload format for consistency
+      const uploadsFromDocs = pendingDocs.map(doc => ({
+        id: doc.id,
+        file_name: doc.file_name,
+        file_type: doc.file_type || doc.blob_data?.type || 'application/octet-stream',
+        file_size: doc.file_size || doc.blob_data?.size || 0,
+        file_blob: doc.blob_data,
+        metadata: doc.metadata || {},
+        data: {
+          id: doc.id,
+          file_name: doc.file_name,
+          file_type: doc.file_type || doc.blob_data?.type || 'application/octet-stream',
+          file_size: doc.file_size || doc.blob_data?.size || 0,
+          metadata: doc.metadata,
+        },
+        status: 'pending',
+      }));
+      
+      // Also try to get from sync queue and normalize format
+      const rawUploadsFromQueue = await getPendingUploadsData();
+      const uploadsFromQueue = rawUploadsFromQueue.map(upload => ({
+        id: upload.id,
+        file_name: upload.data?.file_name || upload.file_blob?.name || 'Unknown',
+        file_type: upload.data?.file_type || upload.file_blob?.type || 'application/octet-stream',
+        file_size: upload.data?.file_size || upload.file_blob?.size || 0,
+        file_blob: upload.file_blob,
+        metadata: upload.data?.metadata || {},
+        data: upload.data,
+        status: upload.status || 'pending',
+      }));
+      
+      console.log('📤 Uploads from sync_queue:', uploadsFromQueue.length, uploadsFromQueue);
+      console.log('📤 Uploads from documents:', uploadsFromDocs.length, uploadsFromDocs);
+      
+      // Merge both sources, avoiding duplicates
+      const allUploadIds = new Set<string>();
+      const allUploads: any[] = [];
+      
+      [...uploadsFromDocs, ...uploadsFromQueue].forEach(upload => {
+        if (!allUploadIds.has(upload.id)) {
+          allUploadIds.add(upload.id);
+          allUploads.push(upload);
+        }
+      });
+      
+      setPendingUploads(allUploads);
+      console.log('📤 Total pending uploads:', allUploads.length);
     } catch (error) {
       console.error('Failed to load offline documents:', error);
     } finally {
       setLoading(false);
     }
-  }, [getOfflineDocuments]);
+  }, [getOfflineDocuments, getPendingUploadsData]);
 
   useEffect(() => {
     if (isOpen) {
       loadDocuments();
+      refreshStats();
     }
-  }, [isOpen, loadDocuments]);
-
-  // Handle sync
-  const handleSync = async () => {
-    setSyncing(true);
-    try {
-      await syncPendingChanges();
-      await refreshStats();
-      await loadDocuments();
-    } finally {
-      setSyncing(false);
-    }
-  };
+  }, [isOpen, loadDocuments, refreshStats]);
 
   // Handle remove document
   const handleRemoveDocument = async (documentId: string) => {
@@ -99,6 +148,43 @@ export function OfflineDocumentsPanel({
     if (confirm('Remove all offline documents? This cannot be undone.')) {
       await clearOfflineData();
       await loadDocuments();
+    }
+  };
+
+  // Handle sync selected uploads
+  const handleSyncSelected = async () => {
+    if (selectedUploads.size === 0) return;
+    
+    setSyncing(true);
+    try {
+      await syncSelectedUploads(Array.from(selectedUploads));
+      setSelectedUploads(new Set());
+      await loadDocuments();
+      await refreshStats();
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Toggle upload selection
+  const toggleUploadSelection = (id: string) => {
+    setSelectedUploads(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  // Select all uploads
+  const selectAllUploads = () => {
+    if (selectedUploads.size === pendingUploads.length) {
+      setSelectedUploads(new Set());
+    } else {
+      setSelectedUploads(new Set(pendingUploads.map(u => u.id)));
     }
   };
 
@@ -132,11 +218,28 @@ export function OfflineDocumentsPanel({
               <HardDrive className="h-5 w-5" />
               <SheetTitle>Offline Storage</SheetTitle>
             </div>
-            {status.isOnline ? (
-              <Cloud className="h-5 w-5 text-green-500" />
-            ) : (
-              <CloudOff className="h-5 w-5 text-red-500" />
-            )}
+            <div className="flex items-center gap-2">
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => {
+                  loadDocuments();
+                  refreshStats();
+                }}
+                disabled={loading}
+              >
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+              {status.isOnline ? (
+                <Cloud className="h-5 w-5 text-green-500" />
+              ) : (
+                <CloudOff className="h-5 w-5 text-red-500" />
+              )}
+            </div>
           </div>
           <SheetDescription>
             Manage documents available offline
@@ -144,6 +247,73 @@ export function OfflineDocumentsPanel({
         </SheetHeader>
 
         <div className="space-y-4 mt-4">
+        {/* Pending Uploads Section */}
+        {pendingUploads.length > 0 && (
+          <div className="space-y-2 pb-4 border-b">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CloudUpload className="h-4 w-4 text-orange-500" />
+                <span className="text-sm font-medium">
+                  Queued for Upload ({pendingUploads.length})
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={selectAllUploads}
+              >
+                {selectedUploads.size === pendingUploads.length ? 'Deselect All' : 'Select All'}
+              </Button>
+            </div>
+
+            <ScrollArea className="max-h-48">
+              <div className="space-y-2">
+                {pendingUploads.map((upload) => (
+                  <div
+                    key={upload.id}
+                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted group border"
+                  >
+                    <Checkbox
+                      checked={selectedUploads.has(upload.id)}
+                      onCheckedChange={() => toggleUploadSelection(upload.id)}
+                    />
+                    <FileText className="h-8 w-8 text-orange-500 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {upload.data?.file_name || 'Unknown'}
+                      </p>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>{formatFileSize(upload.data?.file_size || 0)}</span>
+                        <Badge variant="outline" className="text-xs text-orange-600 border-orange-400">
+                          Pending
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+
+            <Button
+              className="w-full"
+              onClick={handleSyncSelected}
+              disabled={selectedUploads.size === 0 || syncing || !status.isOnline}
+            >
+              {syncing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Syncing...
+                </>
+              ) : (
+                <>
+                  <CloudUpload className="h-4 w-4 mr-2" />
+                  Sync Selected ({selectedUploads.size})
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+
         {/* Storage Usage */}
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
@@ -155,34 +325,14 @@ export function OfflineDocumentsPanel({
           <Progress value={storagePercent} className="h-2" />
         </div>
 
-        {/* Sync Status */}
-        <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-          <div className="space-y-1">
-            {status.pendingSyncCount > 0 && (
-              <div className="flex items-center gap-2 text-sm">
-                <Clock className="h-4 w-4 text-yellow-500" />
-                <span>{status.pendingSyncCount} pending changes</span>
-              </div>
-            )}
-            {status.lastSyncAt && (
-              <div className="text-xs text-muted-foreground">
-                Last sync: {new Date(status.lastSyncAt).toLocaleString()}
-              </div>
-            )}
+        {/* Sync Status - Only show last sync time */}
+        {status.lastSyncAt && (
+          <div className="p-3 bg-muted rounded-lg">
+            <div className="text-xs text-muted-foreground">
+              Last sync: {new Date(status.lastSyncAt).toLocaleString()}
+            </div>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleSync}
-            disabled={syncing || !status.isOnline}
-          >
-            {syncing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
+        )}
 
         {/* Documents List */}
         <div className="space-y-2">
@@ -222,7 +372,7 @@ export function OfflineDocumentsPanel({
                 {documents.map((doc) => (
                   <div
                     key={doc.id}
-                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted group"
+                    className="flex items-center gap-2 p-2 rounded-lg hover:bg-muted group border"
                   >
                     <FileText className="h-8 w-8 text-muted-foreground flex-shrink-0" />
                     <div className="flex-1 min-w-0">
@@ -238,12 +388,12 @@ export function OfflineDocumentsPanel({
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 flex-shrink-0">
                       {getStatusIcon(doc.sync_status)}
                       <Button
                         size="icon"
                         variant="ghost"
-                        className="h-8 w-8 opacity-0 group-hover:opacity-100"
+                        className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
                         onClick={() => handleRemoveDocument(doc.id)}
                       >
                         <Trash2 className="h-4 w-4" />

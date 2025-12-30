@@ -13,6 +13,8 @@ import {
   updateSyncItemStatus,
   clearAllOfflineData,
   toggleDocumentFavorite,
+  queueFileUpload,
+  getPendingUploads,
 } from '@/services/offlineStorage';
 
 interface OfflineStatus {
@@ -23,6 +25,8 @@ interface OfflineStatus {
   offlineDocumentCount: number;
   totalOfflineSize: number;
   lastSyncAt: string | null;
+  showSyncDialog: boolean;
+  pendingUploadCount: number;
 }
 
 export const useOfflineMode = () => {
@@ -34,6 +38,8 @@ export const useOfflineMode = () => {
     offlineDocumentCount: 0,
     totalOfflineSize: 0,
     lastSyncAt: null,
+    showSyncDialog: false,
+    pendingUploadCount: 0,
   });
   const { toast } = useToast();
 
@@ -60,20 +66,31 @@ export const useOfflineMode = () => {
 
   // Listen for online/offline events
   useEffect(() => {
-    const handleOnline = () => {
+    const handleOnline = async () => {
       setStatus(prev => ({ ...prev, isOnline: true }));
-      toast({
-        title: "You're back online",
-        description: "Syncing your changes...",
-      });
-      syncPendingChanges();
+      
+      // Check for pending uploads
+      const pendingUploads = await getPendingUploads();
+      if (pendingUploads.length > 0) {
+        setStatus(prev => ({ 
+          ...prev, 
+          showSyncDialog: true,
+          pendingUploadCount: pendingUploads.length 
+        }));
+      } else {
+        toast({
+          title: "You're back online",
+          description: "Syncing your changes...",
+        });
+        syncPendingChanges();
+      }
     };
 
     const handleOffline = () => {
       setStatus(prev => ({ ...prev, isOnline: false }));
       toast({
         title: "You're offline",
-        description: "Changes will be synced when you're back online",
+        description: "Your uploads will be synced when you're back online",
         variant: "destructive",
       });
     };
@@ -90,11 +107,13 @@ export const useOfflineMode = () => {
   // Refresh stats
   const refreshStats = useCallback(async () => {
     const stats = await getOfflineStorageStats();
+    const pendingUploads = await getPendingUploads();
     setStatus(prev => ({
       ...prev,
       offlineDocumentCount: stats.documentCount,
       totalOfflineSize: stats.totalSize,
       pendingSyncCount: stats.pendingSyncs,
+      pendingUploadCount: pendingUploads.length,
     }));
   }, []);
 
@@ -298,6 +317,251 @@ export const useOfflineMode = () => {
     }
   }, []);
 
+  // Queue file for offline upload
+  const queueOfflineUpload = useCallback(async (file: File, metadata: any = {}) => {
+    try {
+      const id = await queueFileUpload(file, metadata);
+      await refreshStats();
+      
+      toast({
+        title: "Upload queued",
+        description: `${file.name} will be uploaded when you're online`,
+      });
+      
+      return id;
+    } catch (error) {
+      console.error('Failed to queue upload:', error);
+      toast({
+        title: "Failed to queue upload",
+        description: "Could not save file for later upload",
+        variant: "destructive",
+      });
+      return null;
+    }
+  }, [toast, refreshStats]);
+
+  // Get pending uploads
+  const getPendingUploadsData = useCallback(async () => {
+    return await getPendingUploads();
+  }, []);
+
+  // Sync selected uploads
+  const syncSelectedUploads = useCallback(async (selectedIds: string[]) => {
+    if (!status.isOnline || status.isSyncing) return;
+
+    setStatus(prev => ({ ...prev, isSyncing: true }));
+
+    try {
+      // Get uploads from both sync_queue and documents store
+      const uploadsFromQueue = await getPendingUploads();
+      const allDocs = await getAllOfflineDocuments();
+      const pendingDocs = allDocs.filter(doc => doc.metadata?.is_pending_upload === true);
+      
+      // Build combined upload list
+      const uploadMap = new Map<string, any>();
+      
+      // Add from sync queue
+      uploadsFromQueue.forEach(upload => {
+        uploadMap.set(upload.id, {
+          id: upload.id,
+          file_name: upload.data?.file_name || 'Unknown',
+          file_type: upload.data?.file_type || 'application/octet-stream',
+          file_size: upload.data?.file_size || 0,
+          file_blob: upload.file_blob,
+          metadata: upload.data?.metadata || {},
+        });
+      });
+      
+      // Add from documents (these have blob_data instead of file_blob)
+      pendingDocs.forEach(doc => {
+        if (!uploadMap.has(doc.id)) {
+          uploadMap.set(doc.id, {
+            id: doc.id,
+            file_name: doc.file_name,
+            file_type: doc.file_type,
+            file_size: doc.file_size,
+            file_blob: doc.blob_data,
+            metadata: doc.metadata || {},
+          });
+        }
+      });
+      
+      const selectedUploads = selectedIds
+        .map(id => uploadMap.get(id))
+        .filter(Boolean);
+      
+      console.log('📤 Starting sync for', selectedUploads.length, 'uploads');
+      
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const upload of selectedUploads) {
+        try {
+          // Update status if in sync queue
+          try {
+            await updateSyncItemStatus(upload.id, 'syncing');
+          } catch (e) {
+            // Item might only be in documents store
+          }
+
+          if (!upload.file_blob) {
+            throw new Error('File blob not found');
+          }
+
+          // Get user for authentication
+          const { data: userData, error: authError } = await supabase.auth.getUser();
+          if (authError || !userData.user) {
+            throw new Error('User not authenticated');
+          }
+
+          const user = userData.user;
+          const file = upload.file_blob;
+          const metadata = upload.metadata || {};
+          const enableRAG = metadata.enableRAG || false;
+          const enableClassification = metadata.enableClassification || false;
+
+          // Get file type from blob or upload data
+          const fileType = file.type || upload.file_type || 'application/octet-stream';
+          const fileName = upload.file_name || file.name || 'unknown';
+          const fileSize = upload.file_size || file.size || 0;
+
+          console.log('📤 Uploading:', fileName, 'type:', fileType, 'size:', fileSize);
+
+          // Upload file to Supabase Storage
+          const fileExt = fileName.split('.').pop() || 'unknown';
+          const storagePath = `${user.id}/${Date.now()}_${Math.random().toString(36).substring(2)}.${fileExt}`;
+
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('documents')
+            .upload(storagePath, file);
+
+          if (uploadError) {
+            throw new Error(`Storage upload failed: ${uploadError.message}`);
+          }
+
+          console.log('📤 Storage upload successful:', uploadData.path);
+
+          // Determine if we need backend processing
+          const needsBackendProcessing = enableRAG || enableClassification;
+          let documentData: any = null;
+
+          if (needsBackendProcessing) {
+            // Backend processing with RAG/Classification
+            const reader = new FileReader();
+            const fileBase64 = await new Promise<string>((resolve) => {
+              reader.onload = () => resolve(reader.result as string);
+              reader.readAsDataURL(file);
+            });
+
+            const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+            const analysisResponse = await fetch(`${API_BASE_URL}/api/v1/analyze-document`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                documentData: fileBase64,
+                documentName: fileName,
+                task: 'without_template_extraction',
+                userId: user.id,
+                saveToDatabase: true,
+                yoloSignatureEnabled: false,
+                yoloFaceEnabled: false
+              }),
+            });
+
+            if (!analysisResponse.ok) {
+              throw new Error('Backend analysis failed');
+            }
+
+            const analysisData = await analysisResponse.json();
+            documentData = analysisData.document;
+          } else {
+            // Simple upload without backend processing
+            const { data, error } = await supabase
+              .from('documents')
+              .insert({
+                file_name: fileName,
+                file_type: fileType,
+                file_size: fileSize,
+                storage_path: uploadData.path,
+                user_id: user.id,
+                uploaded_by: user.id,
+                processing_status: 'pending',
+                is_deleted: false,
+              })
+              .select()
+              .single();
+
+            if (error) {
+              throw new Error(`Database insert failed: ${error.message}`);
+            }
+
+            documentData = data;
+          }
+
+          console.log('📤 Document saved to database:', documentData?.id);
+
+          // Remove from sync queue and IndexedDB documents store
+          try {
+            await removeSyncItem(upload.id);
+          } catch (e) {
+            // Might not exist in sync queue
+          }
+          await deleteOfflineDocument(upload.id);
+          
+          successCount++;
+        } catch (error) {
+          console.error('Failed to upload:', upload.file_name, error);
+          try {
+            await updateSyncItemStatus(upload.id, 'failed', true);
+          } catch (e) {
+            // Might not exist in sync queue
+          }
+          failCount++;
+        }
+      }
+
+      await refreshStats();
+      setStatus(prev => ({
+        ...prev,
+        isSyncing: false,
+        showSyncDialog: false,
+        lastSyncAt: new Date().toISOString(),
+      }));
+
+      if (successCount > 0) {
+        toast({
+          title: "Sync complete",
+          description: `${successCount} document(s) uploaded successfully${failCount > 0 ? `, ${failCount} failed` : ''}`,
+        });
+      } else {
+        toast({
+          title: "Sync failed",
+          description: "All uploads failed. Please try again.",
+          variant: "destructive",
+        });
+      }
+
+      // Trigger document list refresh
+      window.dispatchEvent(new CustomEvent('documents-changed'));
+      
+    } catch (error) {
+      console.error('Sync failed:', error);
+      setStatus(prev => ({ ...prev, isSyncing: false }));
+      toast({
+        title: "Sync error",
+        description: "Failed to sync documents",
+        variant: "destructive",
+      });
+    }
+  }, [status.isOnline, status.isSyncing, toast, refreshStats]);
+
+  // Close sync dialog
+  const closeSyncDialog = useCallback(() => {
+    setStatus(prev => ({ ...prev, showSyncDialog: false }));
+  }, []);
+
   return {
     status,
     makeDocumentAvailableOffline,
@@ -309,5 +573,9 @@ export const useOfflineMode = () => {
     clearOfflineData,
     isDocumentOffline,
     refreshStats,
+    queueOfflineUpload,
+    getPendingUploadsData,
+    syncSelectedUploads,
+    closeSyncDialog,
   };
 };

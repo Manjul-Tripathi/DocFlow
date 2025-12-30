@@ -138,6 +138,40 @@ class AutoOrganizeService:
             
             existing_folders = {f['name'].lower(): f for f in (existing_folders_response.data or [])}
             
+            # Also create a mapping by document_type in filter_rules
+            existing_folders_by_type = {}
+            for folder in (existing_folders_response.data or []):
+                if folder.get('filter_rules'):
+                    # Check for document_type in filter_rules
+                    doc_types = folder['filter_rules'].get('document_type', [])
+                    if isinstance(doc_types, list):
+                        for dt in doc_types:
+                            existing_folders_by_type[dt.lower()] = folder
+                    # Check for content_type in filter_rules (manual smart folders)
+                    content_types = folder['filter_rules'].get('content_type', [])
+                    if isinstance(content_types, list):
+                        for ct in content_types:
+                            # Store this folder for any document type that contains the content_type
+                            # E.g., if content_type is ['invoice', 'receipt'], it should match 'airtel-payment-receipt'
+                            existing_folders_by_type[ct.lower()] = folder
+            
+            # Helper function to check if a document_type matches any existing folder's filter_rules
+            def matches_existing_folder_criteria(doc_type: str) -> Optional[dict]:
+                """Check if document type matches any existing folder's content_type criteria."""
+                doc_type_lower = doc_type.lower()
+                
+                # Direct match in existing_folders_by_type
+                if doc_type_lower in existing_folders_by_type:
+                    return existing_folders_by_type[doc_type_lower]
+                
+                # Check if any content_type keyword appears in the document_type
+                # E.g., 'airtel-payment-receipt' contains 'receipt'
+                for content_type_key, folder in existing_folders_by_type.items():
+                    if content_type_key in doc_type_lower or doc_type_lower in content_type_key:
+                        return folder
+                
+                return None
+            
             # Create a mapping for fuzzy matching (handles typos, plural/singular, etc.)
             def calculate_similarity(str1: str, str2: str) -> float:
                 """Calculate similarity ratio between two strings (0.0 to 1.0)."""
@@ -204,12 +238,17 @@ class AutoOrganizeService:
                 folder_name = self._format_folder_name(doc_type)
                 folder_key = folder_name.lower()
                 
-                # Check if folder already exists (exact match)
-                if folder_key in existing_folders:
+                # First, check if document_type matches any existing folder's criteria
+                matching_folder = matches_existing_folder_criteria(doc_type)
+                if matching_folder:
+                    folder_id = matching_folder['id']
+                    logger.info(f"📁 Using existing folder (matched by criteria): {matching_folder['name']} for document type '{doc_type}'")
+                # Check if folder already exists (exact name match)
+                elif folder_key in existing_folders:
                     folder_id = existing_folders[folder_key]['id']
-                    logger.info(f"📁 Using existing folder: {folder_name}")
+                    logger.info(f"📁 Using existing folder (exact name match): {folder_name}")
                 else:
-                    # Check for similar folders (fuzzy match)
+                    # Check for similar folders (fuzzy match by name)
                     similar_folder_key = find_similar_folder(folder_name, existing_folders)
                     if similar_folder_key:
                         folder_id = existing_folders[similar_folder_key]['id']
@@ -226,6 +265,7 @@ class AutoOrganizeService:
                             'folder_color': color,
                             'icon': icon,
                             'document_count': 0,
+                            'is_smart': True,  # Mark as smart folder
                             'filter_rules': {
                                 'document_type': [doc_type],
                                 'auto_organize': True

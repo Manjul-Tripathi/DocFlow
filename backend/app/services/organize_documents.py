@@ -67,8 +67,20 @@ class OrganizeDocumentsService:
             
             folder = folder_response.data[0]
             logger.info(f"Processing smart folder: {folder['name']}")
+            logger.info(f"AI Criteria: {folder['ai_criteria']}")
             
-            # Get all documents for this user that aren't already in this folder
+            # Get all documents that are already in ANY folder
+            existing_relationships = self.supabase.from_('document_folder_relationships').select(
+                'document_id'
+            ).execute()
+            
+            documents_in_folders = set()
+            if existing_relationships.data:
+                documents_in_folders = {rel['document_id'] for rel in existing_relationships.data}
+            
+            logger.info(f"Found {len(documents_in_folders)} documents already in folders")
+            
+            # Get all documents for this user with their insights and analysis_result
             documents_response = self.supabase.from_('documents').select("""
                 id,
                 user_id,
@@ -77,20 +89,29 @@ class OrganizeDocumentsService:
                 extracted_text,
                 created_at,
                 metadata,
+                document_type,
+                importance_score,
+                analysis_result,
                 document_insights (
                     importance_score,
                     key_topics,
                     document_type,
-                    categories
+                    categories,
+                    summary
                 )
             """).eq('user_id', folder['user_id']).execute()
             
-            if documents_response.error:
-                logger.error(f"Error fetching documents: {documents_response.error}")
-                raise Exception("Failed to fetch documents")
+            # Check if we got data
+            if not documents_response.data:
+                logger.warning("No documents found for user")
+                all_documents = []
+            else:
+                all_documents = documents_response.data
             
-            documents = documents_response.data
-            logger.info(f"Found {len(documents)} documents to evaluate")
+            # Filter out documents that are already in any folder
+            documents = [doc for doc in all_documents if doc['id'] not in documents_in_folders]
+            
+            logger.info(f"Found {len(all_documents)} total documents, {len(documents)} not in any folder")
             
             organization_results = []
             documents_added = 0
@@ -99,9 +120,31 @@ class OrganizeDocumentsService:
                 for document in documents:
                     try:
                         # Format document with insights
+                        # Priority 1: Use document_insights table
+                        # Priority 2: Use analysis_result (rich AI-extracted data)
+                        # Priority 3: Fallback to document-level fields
+                        insights_data = {}
+                        if document.get('document_insights') and len(document['document_insights']) > 0:
+                            insights_data = document['document_insights'][0]
+                        elif document.get('analysis_result'):
+                            # Use analysis_result as rich fallback (contains AI-extracted data)
+                            analysis = document['analysis_result']
+                            insights_data = {
+                                "importance_score": analysis.get('importance_score', document.get('importance_score')),
+                                "document_type": analysis.get('document_type', document.get('document_type')),
+                                "summary": analysis.get('summary'),
+                                "key_topics": analysis.get('key_topics', []),
+                            }
+                        else:
+                            # Final fallback to basic document fields
+                            insights_data = {
+                                "importance_score": document.get('importance_score'),
+                                "document_type": document.get('document_type'),
+                            }
+                        
                         formatted_document = {
                             **document,
-                            "insights": document.get('document_insights', [{}])[0] if document.get('document_insights') else {}
+                            "insights": insights_data
                         }
                         
                         match_result = self._matches_criteria(formatted_document, folder['ai_criteria'])
@@ -111,17 +154,15 @@ class OrganizeDocumentsService:
                         
                         if match_result['matches']:
                             # Insert relationship
-                            relationship_response = self.supabase.from_('document_folder_relationships').insert({
-                                "document_id": document['id'],
-                                "folder_id": folder_id,
-                                "confidence_score": match_result['confidence'],
-                                "is_auto_assigned": True,
-                                "assigned_reason": ', '.join(match_result['reasons'][:3]) if match_result['reasons'] else None
-                            }).execute()
-                            
-                            if relationship_response.error:
-                                logger.error(f"Error inserting relationship for document {doc_name}: {relationship_response.error}")
-                            else:
+                            try:
+                                relationship_response = self.supabase.from_('document_folder_relationships').insert({
+                                    "document_id": document['id'],
+                                    "folder_id": folder_id,
+                                    "confidence_score": match_result['confidence'],
+                                    "is_auto_assigned": True,
+                                    "assigned_reason": ', '.join(match_result['reasons'][:3]) if match_result['reasons'] else None
+                                }).execute()
+                                
                                 documents_added += 1
                                 organization_results.append({
                                     "documentId": document['id'],
@@ -131,18 +172,20 @@ class OrganizeDocumentsService:
                                 })
                                 
                                 logger.info(f"✓ Added document to folder: {doc_name} (confidence: {match_result['confidence'] * 100:.0f}%)")
+                            except Exception as insert_error:
+                                logger.error(f"Error inserting relationship for document {doc_name}: {str(insert_error)}")
                     except Exception as e:
                         doc_name = document.get('file_name', 'Unknown')
                         logger.error(f"Error processing document {doc_name}: {str(e)}")
                 
                 # Update folder document count
                 if documents_added > 0:
-                    count_response = self.supabase.from_('smart_folders').update({
-                        "document_count": documents_added
-                    }).eq('id', folder_id).execute()
-                    
-                    if count_response.error:
-                        logger.error(f"Error updating folder document count: {count_response.error}")
+                    try:
+                        count_response = self.supabase.from_('smart_folders').update({
+                            "document_count": documents_added
+                        }).eq('id', folder_id).execute()
+                    except Exception as count_error:
+                        logger.error(f"Error updating folder document count: {str(count_error)}")
             
             logger.info(f"Organization complete. Added {documents_added} documents to folder \"{folder['name']}\".")
             
@@ -163,25 +206,34 @@ class OrganizeDocumentsService:
     def _matches_criteria(self, document: Dict[str, Any], criteria: Dict[str, Any]) -> Dict[str, Any]:
         """Check if document matches smart folder criteria."""
         if not criteria:
+            logger.debug("No criteria specified, document does not match")
             return {"matches": False, "confidence": 0, "reasons": []}
         
         total_score = 0
         max_score = 0
         reasons = []
         
-        # Content Type Matching
-        if criteria.get('content_type') and isinstance(criteria['content_type'], list):
+        # Content Type Matching - only if content types are specified
+        content_types = criteria.get('content_type', [])
+        if content_types and isinstance(content_types, list) and len(content_types) > 0:
             max_score += 30
-            content_types = [t.lower() for t in criteria['content_type']]
+            content_types_lower = [t.lower() for t in content_types]
             document_text = (document.get('extracted_text') or '').lower()
             file_name = (document.get('file_name') or '').lower()
             document_type = (document.get('insights', {}).get('document_type') or '').lower()
             
+            # Also check summary and key_topics from analysis_result
+            summary = (document.get('insights', {}).get('summary') or '').lower()
+            key_topics = document.get('insights', {}).get('key_topics') or []
+            key_topics_text = ' '.join([str(topic).lower() for topic in key_topics if topic])
+            
             content_match = False
-            for content_type in content_types:
+            for content_type in content_types_lower:
                 if (content_type in document_text or 
                     content_type in file_name or 
-                    content_type in document_type):
+                    content_type in document_type or
+                    content_type in summary or
+                    content_type in key_topics_text):
                     content_match = True
                     reasons.append(f"Content type match: {content_type}")
                     break
@@ -190,12 +242,13 @@ class OrganizeDocumentsService:
                 total_score += 30
         
         # Importance Score Matching
-        if criteria.get('importance_score') and criteria['importance_score'].get('min'):
+        importance_score = criteria.get('importance_score')
+        if importance_score and isinstance(importance_score, dict) and importance_score.get('min'):
             max_score += 25
             doc_importance = document.get('insights', {}).get('importance_score', 0)
-            min_importance = criteria['importance_score']['min']
+            min_importance = importance_score['min']
             
-            if doc_importance >= min_importance:
+            if doc_importance and doc_importance >= min_importance:
                 total_score += 25
                 reasons.append(f"Importance score {doc_importance * 100:.0f}% >= {min_importance * 100:.0f}%")
         
@@ -214,7 +267,8 @@ class OrganizeDocumentsService:
                     reasons.append(f"Created within last {max_days} days ({days_ago} days ago)")
         
         # Days Old Matching (alternative format)
-        if criteria.get('days_old') and isinstance(criteria['days_old'], (int, float)):
+        days_old = criteria.get('days_old')
+        if days_old and isinstance(days_old, (int, float)) and days_old > 0:
             max_score += 20
             doc_date = document.get('created_at')
             if doc_date:
@@ -222,30 +276,46 @@ class OrganizeDocumentsService:
                 doc_date_obj = datetime.fromisoformat(doc_date.replace('Z', '+00:00'))
                 days_ago = (datetime.now(doc_date_obj.tzinfo) - doc_date_obj).days
                 
-                if days_ago <= criteria['days_old']:
+                if days_ago <= days_old:
                     total_score += 20
-                    reasons.append(f"Created within last {criteria['days_old']} days ({days_ago} days ago)")
+                    reasons.append(f"Created within last {days_old} days ({days_ago} days ago)")
         
-        # Keywords Matching
-        if criteria.get('keywords') and isinstance(criteria['keywords'], list):
+        # Keywords Matching - only if keywords are specified
+        keywords = criteria.get('keywords', [])
+        if keywords and isinstance(keywords, list) and len(keywords) > 0:
             max_score += 25
             document_text = (document.get('extracted_text') or '').lower()
             file_name = (document.get('file_name') or '').lower()
+            
+            # Also search in summary and key_topics from analysis_result
+            summary = (document.get('insights', {}).get('summary') or '').lower()
+            key_topics = document.get('insights', {}).get('key_topics') or []
+            key_topics_text = ' '.join([str(topic).lower() for topic in key_topics if topic])
+            
             keyword_matches = 0
             
-            for keyword in criteria['keywords']:
+            for keyword in keywords:
                 keyword_lower = keyword.lower()
                 if (keyword_lower in document_text or 
-                    keyword_lower in file_name):
+                    keyword_lower in file_name or
+                    keyword_lower in summary or
+                    keyword_lower in key_topics_text):
                     keyword_matches += 1
                     reasons.append(f"Keyword match: {keyword}")
             
             if keyword_matches > 0:
-                keyword_score = min(25, (keyword_matches / len(criteria['keywords'])) * 25)
+                keyword_score = min(25, (keyword_matches / len(keywords)) * 25)
                 total_score += keyword_score
+        
+        # If no criteria were actually specified (all empty), don't match
+        if max_score == 0:
+            logger.debug(f"No valid criteria specified for document {document.get('file_name', 'Unknown')}")
+            return {"matches": False, "confidence": 0, "reasons": ["No criteria specified"]}
         
         # Calculate confidence as percentage
         confidence = (total_score / max_score) if max_score > 0 else 0
         matches = confidence >= 0.3  # Require at least 30% match
+        
+        logger.debug(f"Document {document.get('file_name', 'Unknown')}: score={total_score}/{max_score}, confidence={confidence:.2f}, matches={matches}")
         
         return {"matches": matches, "confidence": confidence, "reasons": reasons}

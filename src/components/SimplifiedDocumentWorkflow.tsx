@@ -27,10 +27,10 @@ type WorkflowStep = 'upload' | 'template-selection' | 'manual-selection' | 'extr
 
 export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProps> = ({ onComplete }) => {
   // Access processing context to reset any template-matching state when entering Step 2
-  const { 
-    resetTemplateMatching, 
-    setIsTemplateMatching, 
-    setTemplateMatchingProgress, 
+  const {
+    resetTemplateMatching,
+    setIsTemplateMatching,
+    setTemplateMatchingProgress,
     setTemplateMatches,
     currentWorkflowStep: currentStep,
     setCurrentWorkflowStep: setCurrentStep,
@@ -78,13 +78,13 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
       const savedState = localStorage.getItem(PROCESSING_STATE_KEY);
       if (savedState) {
         const state = JSON.parse(savedState);
-        
+
         // Only restore if processing was in progress
         if (state.isProcessing && state.currentStep === 'extraction') {
           // Restore processing state
           setIsProcessing(true);
           setProgress(state.progress || 0);
-          
+
           // Restore extraction timing
           if (state.extractionStartTime) {
             const startTime = state.extractionStartTime;
@@ -93,22 +93,22 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
             const elapsed = Date.now() - startTime;
             setExtractionTime(elapsed);
           }
-          
+
           // Restore request ID for cancellation
           if (state.currentRequestId) {
             setCurrentRequestId(state.currentRequestId);
           }
-          
+
           // Restore workflow step
           if (state.currentStep) {
             setCurrentStep(state.currentStep);
           }
-          
+
           // Restore selected template if available
           if (state.selectedTemplate) {
             setSelectedTemplate(state.selectedTemplate);
           }
-          
+
           console.log('✅ Restored processing state from localStorage');
         } else {
           // Clear stale processing state
@@ -119,7 +119,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
       console.warn('[SimplifiedDocumentWorkflow] Failed to restore processing state:', e);
       localStorage.removeItem(PROCESSING_STATE_KEY);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run on mount
 
   // Persist processing state to localStorage whenever it changes
@@ -196,26 +196,26 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
   useEffect(() => {
     if (globalExtractedData) {
       console.log('Loading extracted data from global state:', globalExtractedData);
-      
+
       // If we have extracted data, processing must be complete
       // Clear any processing state
       if (isProcessing) {
         setIsProcessing(false);
         localStorage.removeItem(PROCESSING_STATE_KEY);
       }
-      
+
       // Restore converted images if available and not already set
-      if (globalExtractedData.convertedImages && 
-          globalExtractedData.convertedImages.length > 0 && 
-          convertedImages.length === 0) {
+      if (globalExtractedData.convertedImages &&
+        globalExtractedData.convertedImages.length > 0 &&
+        convertedImages.length === 0) {
         setConvertedImages(globalExtractedData.convertedImages);
       }
-      
+
       // Restore extraction time if available and not already set
       // Check if extractionTime is stored in milliseconds (new format) or seconds (legacy format)
-      if (globalExtractedData.extractionTime !== undefined && 
-          globalExtractedData.extractionTime !== null && 
-          extractionTime === null) {
+      if (globalExtractedData.extractionTime !== undefined &&
+        globalExtractedData.extractionTime !== null &&
+        extractionTime === null) {
         // If extractionTime > 100000, it's likely in milliseconds (e.g., 13567ms)
         // If extractionTime < 1000, it's likely in seconds (e.g., 13s)
         // For backward compatibility, check both formats
@@ -228,12 +228,12 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
           setExtractionTime(timeValue * 1000);
         }
       }
-      
+
       // Restore document data if not already set
       if (!documentData) {
         setDocumentData(globalExtractedData);
       }
-      
+
       // Restore workflow step if we have extracted data
       if (currentStep !== 'completed' && globalExtractedData.hierarchicalData) {
         setCurrentStep('completed');
@@ -269,7 +269,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
       // non-fatal safeguard
     }
     setCurrentStep('template-selection');
-    
+
     toast({
       title: "Document uploaded successfully",
       description: `${uploadDocument.name} is ready for processing`,
@@ -308,7 +308,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
       abortController.abort();
       setAbortController(null);
     }
-    
+
     if (currentRequestId) {
       try {
         const analysisService = DocumentAnalysisService.getInstance();
@@ -318,15 +318,15 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
       }
       setCurrentRequestId(null);
     }
-    
+
     setIsProcessing(false);
     setProgress(0);
     setExtractionTime(null);
     setExtractionStartTime(null);
-    
+
     // Clear processing state from localStorage
     localStorage.removeItem(PROCESSING_STATE_KEY);
-    
+
     toast({
       title: "Processing cancelled",
       description: "Document processing has been cancelled",
@@ -354,7 +354,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
     try {
       // Extract information using AI
       const analysisService = DocumentAnalysisService.getInstance();
-      
+
       // Get maxWorkers, maxThreads, yoloSignatureEnabled, and yoloFaceEnabled from user preferences (stored in localStorage)
       const storedPreferences = localStorage.getItem('user_preferences');
       let maxWorkers = 10; // Default
@@ -372,7 +372,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
           console.warn('Failed to parse user preferences:', e);
         }
       }
-      
+
       setProgress(30);
       toast({
         title: "Extracting information",
@@ -398,13 +398,13 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const { supabase } = await import('@/integrations/supabase/client');
           console.log('🔍 [Frontend] Fetching template with metadata from DB, template ID:', (template as any).id);
-          
+
           const { data, error } = await supabase
             .from('document_templates')
             .select('id, name, document_type, version, fields, metadata')
             .eq('id', (template as any).id)
             .single();
-            
+
           if (!error && data) {
             const hasMetadata = data.metadata !== null && data.metadata !== undefined;
             const hasTemplateStructure = hasMetadata && data.metadata?.template_structure;
@@ -425,7 +425,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
           console.warn('⚠️ [Frontend] Error loading template from DB, using provided template:', e);
           enhancedTemplates = [template];
         }
-        
+
         console.log('📤 [Frontend] Sending templates to backend:', enhancedTemplates?.map(t => ({
           id: t.id,
           name: t.name,
@@ -476,7 +476,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
       // Store the converted images from the response
       console.log('🔍 Template result convertedImages:', templateResult?.convertedImages);
       console.log('🔍 Generic result convertedImages:', genericResult?.convertedImages);
-      
+
       const resultImages = templateResult?.convertedImages || genericResult?.convertedImages || [];
       if (resultImages && Array.isArray(resultImages)) {
         extractedImages = resultImages;
@@ -489,10 +489,10 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
       setProgress(80);
 
       // Get hierarchical_data directly from LLM response (no fields array conversion)
-      const hierarchicalData = genericResult?.result?.hierarchical_data || 
-                              templateResult?.result?.hierarchical_data ||
-                              fieldResult?.hierarchical_data ||
-                              null;
+      const hierarchicalData = genericResult?.result?.hierarchical_data ||
+        templateResult?.result?.hierarchical_data ||
+        fieldResult?.hierarchical_data ||
+        null;
 
       // Final extraction time is already set by the interval, but ensure it's accurate
       const endTime = Date.now();
@@ -507,15 +507,15 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
         ocrText: ocrResult.extractedText || '',
         extractedFields: [], // Empty array - system now uses hierarchicalData only
         templateMatch: template || undefined,
-        confidence: template 
-          ? Math.max((template.confidence || 0) / 100, 0.8) 
+        confidence: template
+          ? Math.max((template.confidence || 0) / 100, 0.8)
           : 0.7,
         hierarchicalData: hierarchicalData // Primary data source - no fields array needed
       };
 
       // Store extracted data globally (includes convertedImages and extractionTime)
       setGlobalExtractedData(extractedData);
-      
+
       // Extract document ID from backend auto-save response
       const backendResponse = templateResult || genericResult;
       if (backendResponse?.savedDocument?.id) {
@@ -524,7 +524,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
       } else {
         console.log('⚠️ No savedDocument.id found in backend response');
       }
-      
+
       setProgress(100);
       setCurrentStep('completed');
 
@@ -541,45 +541,45 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
         toast({
           title: "Processing completed",
           description: `Document processed and ${(() => {
-          // Count only the actual field-value pairs displayed to user
-          const countFields = (data: any): number => {
-            if (Array.isArray(data)) {
-              // For arrays, count items in the array (like qualification rows)
-              return data.reduce((total, item) => {
-                if (typeof item === 'object' && item !== null) {
-                  // Count the key-value pairs within each array item
-                  return total + Object.keys(item).length;
-                }
-                return total + 1;
-              }, 0);
-            } else if (typeof data === 'object' && data !== null) {
-              // For objects, count only leaf-level field-value pairs
-              return Object.values(data).reduce((total, value) => {
-                if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                  // For nested objects, count their key-value pairs
-                  return total + Object.keys(value).length;
-                } else if (Array.isArray(value)) {
-                  // For arrays, count items in the array
-                  return total + value.reduce((arrayTotal, item) => {
-                    if (typeof item === 'object' && item !== null) {
-                      return arrayTotal + Object.keys(item).length;
-                    }
-                    return arrayTotal + 1;
-                  }, 0);
-                }
-                return total + 1;
-              }, 0);
-            }
-            return 1;
-          };
+            // Count only the actual field-value pairs displayed to user
+            const countFields = (data: any): number => {
+              if (Array.isArray(data)) {
+                // For arrays, count items in the array (like qualification rows)
+                return data.reduce((total, item) => {
+                  if (typeof item === 'object' && item !== null) {
+                    // Count the key-value pairs within each array item
+                    return total + Object.keys(item).length;
+                  }
+                  return total + 1;
+                }, 0);
+              } else if (typeof data === 'object' && data !== null) {
+                // For objects, count only leaf-level field-value pairs
+                return Object.values(data).reduce((total, value) => {
+                  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                    // For nested objects, count their key-value pairs
+                    return total + Object.keys(value).length;
+                  } else if (Array.isArray(value)) {
+                    // For arrays, count items in the array
+                    return total + value.reduce((arrayTotal, item) => {
+                      if (typeof item === 'object' && item !== null) {
+                        return arrayTotal + Object.keys(item).length;
+                      }
+                      return arrayTotal + 1;
+                    }, 0);
+                  }
+                  return total + 1;
+                }, 0);
+              }
+              return 1;
+            };
 
-          if (Array.isArray(fieldResult.fields)) {
-            return countFields(fieldResult.fields);
-          } else if (typeof fieldResult.fields === 'object' && fieldResult.fields !== null) {
-            return countFields(fieldResult.fields);
-          }
-          return 0;
-        })()} fields extracted`,
+            if (Array.isArray(fieldResult.fields)) {
+              return countFields(fieldResult.fields);
+            } else if (typeof fieldResult.fields === 'object' && fieldResult.fields !== null) {
+              return countFields(fieldResult.fields);
+            }
+            return 0;
+          })()} fields extracted`,
         });
       }
 
@@ -591,13 +591,13 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
     } catch (error) {
       console.error('Extraction failed:', error);
       setExtractionStartTime(null); // Stop the interval on error
-      
+
       // Check if error is due to cancellation
       if (error instanceof Error && (error.message.includes('cancelled') || error.name === 'AbortError')) {
         // Already handled by handleCancelProcessing
         return;
       }
-      
+
       toast({
         title: "Processing failed",
         description: error instanceof Error ? error.message : "Failed to extract information",
@@ -654,7 +654,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
         })
         .select()
         .single();
-      
+
       console.log('📊 Supabase insert response - documentRecord:', documentRecord);
       console.log('📊 Supabase insert response - documentError:', documentError);
 
@@ -664,25 +664,50 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
       }
 
       console.log('Document saved successfully with ID:', documentRecord.id);
+
+      // Create Version 1 record in document_versions for version comparison feature
+      try {
+        const { error: versionError } = await supabase
+          .from('document_versions')
+          .insert({
+            document_id: documentRecord.id,
+            version_number: 1,
+            content: `documents/${user.user.id}/${data.filename}`,
+            change_summary: 'Initial upload',
+            created_by: user.user.id,
+            major_version: 1,
+            minor_version: 0,
+          });
+
+        if (versionError) {
+          console.warn('Could not create initial version record:', versionError);
+        } else {
+          console.log('Created version 1 record for document:', documentRecord.id);
+        }
+      } catch (versionCreationError) {
+        console.warn('Error creating version record:', versionCreationError);
+      }
+
       // Store the document ID immediately after successful save
       console.log('🔑 Setting savedDocumentId to:', documentRecord.id);
       setSavedDocumentId(documentRecord.id);
+
 
       // Generate embeddings for RAG
       if (data.ocrText && data.ocrText.trim().length > 0) {
         try {
           console.log('Generating embeddings for document:', documentRecord.id);
           const { data: embeddingResult, error: embeddingError } = await supabase.functions.invoke('generate-embeddings', {
-            body: { 
+            body: {
               text: data.ocrText,
-              documentId: documentRecord.id 
+              documentId: documentRecord.id
             }
           });
-          
+
           if (embeddingError) {
             console.error('Embedding generation failed:', embeddingError);
           } else {
-      console.log('Embeddings generated successfully for document:', documentRecord.id);
+            console.log('Embeddings generated successfully for document:', documentRecord.id);
           }
         } catch (embeddingError) {
           console.error('Error generating embeddings:', embeddingError);
@@ -702,7 +727,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
         supabaseId: documentRecord.id
       });
       localStorage.setItem('processed_documents', JSON.stringify(savedDocuments));
-      
+
       // Store the document ID for later use
       setSavedDocumentId(documentRecord.id);
 
@@ -727,32 +752,32 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
   // Helper function to merge edited data with original data structure
   const mergeEditedData = (originalData: any, editedData: any): any => {
     if (!originalData || !editedData) return originalData;
-    
+
     // Deep clone the original data
     const mergedData = JSON.parse(JSON.stringify(originalData));
-    
+
     console.log('🔍 Merging data - originalData structure:', Object.keys(originalData));
     console.log('🔍 Merging data - editedData:', editedData);
     console.log('🔍 Merging data - has hierarchical_data:', !!originalData.hierarchical_data);
-    
+
     // PRIMARY: Handle hierarchical_data structure (main data storage format)
     if (mergedData.hierarchical_data && typeof mergedData.hierarchical_data === 'object') {
       console.log('� Merging into hierarchical_data...');
-      
+
       Object.keys(editedData).forEach(sectionKey => {
         const sectionEdits = editedData[sectionKey];
         if (!sectionEdits || typeof sectionEdits !== 'object') return;
-        
+
         // Find the matching section in hierarchical_data (case-insensitive)
         const matchingSectionKey = Object.keys(mergedData.hierarchical_data).find(key => {
           if (key.startsWith('_')) return false; // Skip internal keys
           const normalizedKey = key.toLowerCase().replace(/[\s_-]+/g, '_');
           return normalizedKey === sectionKey || key.toLowerCase() === sectionKey.toLowerCase();
         });
-        
+
         if (matchingSectionKey && mergedData.hierarchical_data[matchingSectionKey]) {
           const sectionData = mergedData.hierarchical_data[matchingSectionKey];
-          
+
           // Handle object sections (most common case)
           if (typeof sectionData === 'object' && !Array.isArray(sectionData)) {
             Object.keys(sectionEdits).forEach(fieldKey => {
@@ -760,9 +785,9 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
               const matchingFieldKey = Object.keys(sectionData).find(key => {
                 const normalizedKey = key.toLowerCase().replace(/[\s_-]+/g, '_');
                 return normalizedKey === fieldKey.toLowerCase().replace(/[\s_-]+/g, '_') ||
-                       key.toLowerCase() === fieldKey.toLowerCase();
+                  key.toLowerCase() === fieldKey.toLowerCase();
               });
-              
+
               if (matchingFieldKey !== undefined) {
                 console.log(`� Updating hierarchical_data.${matchingSectionKey}.${matchingFieldKey}: "${sectionData[matchingFieldKey]}" → "${sectionEdits[fieldKey]}"`);
                 sectionData[matchingFieldKey] = sectionEdits[fieldKey];
@@ -787,23 +812,23 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
         }
       });
     }
-    
+
     // FALLBACK: Handle fields array structure (legacy format)
     if (mergedData.fields && Array.isArray(mergedData.fields)) {
       console.log('🔄 Merging into fields array...');
       mergedData.fields.forEach((field: any) => {
         const fieldLabel = field.label || field.name;
         if (!fieldLabel) return;
-        
+
         const sectionKey = fieldLabel.toLowerCase().replace(/\s+/g, '_');
         const sectionEdits = editedData[sectionKey];
-        
+
         if (sectionEdits && field.value && typeof field.value === 'object') {
           Object.keys(field.value).forEach(fieldName => {
-            const matchingKey = Object.keys(sectionEdits).find(key => 
+            const matchingKey = Object.keys(sectionEdits).find(key =>
               key.toLowerCase() === fieldName.toLowerCase()
             );
-            
+
             if (matchingKey && sectionEdits[matchingKey] !== undefined) {
               console.log(`🔄 Updating fields.${sectionKey}.${fieldName}: "${field.value[fieldName]}" → "${sectionEdits[matchingKey]}"`);
               field.value[fieldName] = sectionEdits[matchingKey];
@@ -812,7 +837,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
         }
       });
     }
-    
+
     // FALLBACK: Handle _parsed object structure (legacy format)
     if (mergedData._parsed && typeof mergedData._parsed === 'object') {
       console.log('🔄 Merging into _parsed...');
@@ -820,7 +845,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
         if (!sectionKey) return;
         const normalizedSectionKey = sectionKey.toLowerCase().replace(/\s+/g, '_');
         const sectionEdits = editedData[normalizedSectionKey];
-        
+
         if (sectionEdits && mergedData._parsed[sectionKey] && typeof mergedData._parsed[sectionKey] === 'object') {
           Object.keys(mergedData._parsed[sectionKey]).forEach(fieldName => {
             if (sectionEdits[fieldName] !== undefined) {
@@ -831,7 +856,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
         }
       });
     }
-    
+
     console.log('✅ Merged data result:', mergedData);
     return mergedData;
   };
@@ -842,47 +867,47 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
     console.log('📊 documentData:', documentData);
     console.log('📊 globalExtractedData:', globalExtractedData);
     console.log('📊 editedData:', editedData);
-    
+
     if (!documentData) {
       console.log('❌ No documentData, returning');
       return;
     }
-    
+
     setIsSaving(true);
     try {
       const analysisService = DocumentAnalysisService.getInstance();
-      
+
       // Get the current extracted data
       let currentData = globalExtractedData || documentData;
       console.log('📊 currentData before merge:', currentData);
       console.log('📊 currentData.hierarchicalData:', currentData?.hierarchicalData);
       console.log('📊 currentData.hierarchical_data:', currentData?.hierarchical_data);
-      
+
       // Build analysisResult with proper hierarchical_data structure
       let analysisResult: any = {};
-      
+
       // Get hierarchical_data from various possible locations
-      const hierarchicalData = currentData?.hierarchicalData || 
-                              currentData?.hierarchical_data || 
-                              currentData?.analysis_result?.hierarchical_data ||
-                              null;
-      
+      const hierarchicalData = currentData?.hierarchicalData ||
+        currentData?.hierarchical_data ||
+        currentData?.analysis_result?.hierarchical_data ||
+        null;
+
       if (hierarchicalData) {
         analysisResult.hierarchical_data = hierarchicalData;
         console.log('📊 Found hierarchical_data:', Object.keys(hierarchicalData));
       }
-      
+
       // Include other structures if they exist
       if (currentData?.extractedFields) {
         analysisResult.fields = currentData.extractedFields;
       } else if (currentData?.fields) {
         analysisResult.fields = currentData.fields;
       }
-      
+
       if (currentData?._parsed) {
         analysisResult._parsed = currentData._parsed;
       }
-      
+
       // Merge edited data if it exists
       if (editedData && Object.keys(editedData).length > 0) {
         console.log('🔄 Merging edited data...');
@@ -890,24 +915,24 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
         analysisResult = mergeEditedData(analysisResult, editedData);
         console.log('📊 analysisResult after merge:', analysisResult);
       }
-      
+
       if (!analysisResult || Object.keys(analysisResult).length === 0) {
         throw new Error('No extracted data to save');
       }
-      
+
       // Determine the task type based on whether template was used
       const task = selectedTemplate ? 'template_guided_extraction' : 'without_template_extraction';
       console.log('📊 task:', task);
       console.log('📊 selectedTemplate:', selectedTemplate);
-      
+
       // Get user ID from auth
       const { data: { user } } = await supabase.auth.getUser();
       const userId = user?.id || 'default-user';
       console.log('📊 userId:', userId);
       console.log('📊 savedDocumentId (for update):', savedDocumentId);
-      
+
       console.log('🔄 Calling directSaveToDatabase...');
-      
+
       // Call direct save instead of re-processing
       const saveResult = await analysisService.directSaveToDatabase(
         analysisResult,
@@ -916,19 +941,19 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
         currentData.filename,
         savedDocumentId || undefined
       );
-      
+
       console.log('📊 saveResult:', saveResult);
       console.log('📊 saveResult.success:', saveResult.success);
       console.log('📊 saveResult.documentId:', saveResult.documentId);
-      
+
       if (saveResult.success) {
         console.log('✅ Setting isDataSaved to true');
         setIsDataSaved(true);
         setSavedDocumentId(saveResult.documentId || 'saved');
-        
+
         // Trigger refresh of document history
         triggerRefresh();
-        
+
         toast({
           title: "✅ Data Saved Successfully!",
           description: "Your document has been saved to the database",
@@ -996,11 +1021,10 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {steps.map((step, index) => (
               <div key={step.key} className="flex flex-col items-center text-center">
-                <div className={`p-3 rounded-full border-2 mb-2 ${
-                  step.completed ? 'border-success bg-success/10' :
+                <div className={`p-3 rounded-full border-2 mb-2 ${step.completed ? 'border-success bg-success/10' :
                   currentStep === step.key ? 'border-primary bg-primary/10' :
-                  'border-border bg-background'
-                }`}>
+                    'border-border bg-background'
+                  }`}>
                   {step.completed ? (
                     <CheckCircle className="w-5 h-5 text-success" />
                   ) : (
@@ -1031,7 +1055,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
               onFileUploaded={handleDocumentUploaded}
               onCameraClick={() => setShowCamera(true)}
             />
-            
+
             {showCamera && (
               <CameraCapture
                 onCapture={(file) => {
@@ -1089,27 +1113,27 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
                 </SelectContent>
               </Select>
             </div>
-            
+
             <TemplateDetection
               documentName={documentData.filename}
               documentData={documentData.preprocessedImage}
               onTemplateSelected={handleTemplateSelected}
               onCreateNew={() => handleProcessWithoutTemplate()}
             />
-            
+
             {/* Simplified Options */}
             <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={handleManualTemplateSelection}
                 className="flex items-center justify-center gap-2"
               >
                 <Search className="w-4 h-4" />
                 Browse Templates
               </Button>
-              
-              <Button 
-                variant="outline" 
+
+              <Button
+                variant="outline"
                 onClick={handleProcessWithoutTemplate}
                 className="flex items-center justify-center gap-2"
               >
@@ -1148,7 +1172,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
           <CardHeader>
             <CardTitle>Step 3: Extracting Information</CardTitle>
             <p className="text-muted-foreground">
-              {selectedTemplate 
+              {selectedTemplate
                 ? `Extracting data using ${selectedTemplate.name} template`
                 : 'Extracting data using AI analysis'
               }
@@ -1162,8 +1186,8 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
                   <Progress value={progress} className="w-full max-w-md mx-auto" />
                   <p className="text-sm text-muted-foreground">
                     {progress < 50 ? 'Analyzing document structure...' :
-                     progress < 80 ? 'Extracting field information...' :
-                     'Saving to repository...'}
+                      progress < 80 ? 'Extracting field information...' :
+                        'Saving to repository...'}
                   </p>
                   {extractionTime !== null && (
                     <p className="text-xs text-muted-foreground flex items-center justify-center gap-1">
@@ -1187,8 +1211,8 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
                       Using template: {selectedTemplate.name}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {Math.round((selectedTemplate.confidence || 0) <= 1 
-                        ? (selectedTemplate.confidence || 0) * 100 
+                      {Math.round((selectedTemplate.confidence || 0) <= 1
+                        ? (selectedTemplate.confidence || 0) * 100
                         : selectedTemplate.confidence || 0)}% match confidence
                     </p>
                   </div>
@@ -1210,7 +1234,7 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
               Processing Complete!
             </CardTitle>
             <p className="text-muted-foreground">
-              {isDataSaved 
+              {isDataSaved
                 ? "✅ Your document has been processed and saved successfully to the database!"
                 : "Your document has been processed successfully. Click \"Save to Database\" to persist the data."
               }
@@ -1225,24 +1249,24 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
                   <p><span className="text-muted-foreground">Template:</span> {selectedTemplate?.name || 'Generic extraction'}</p>
                   <p><span className="text-muted-foreground">Fields extracted:</span> {(() => {
                     const data = globalExtractedData || documentData;
-                    
+
                     // Count from extracted hierarchical data (works for both template-based and without-template extraction)
                     const hierarchicalData = data?.hierarchicalData || data?.hierarchical_data;
                     if (hierarchicalData && typeof hierarchicalData === 'object' && !Array.isArray(hierarchicalData)) {
                       return countFieldsFromHierarchicalData(hierarchicalData);
                     }
-                    
+
                     // Fallback: try extractedFields array (for legacy non-template extraction)
                     if (data?.extractedFields && Array.isArray(data.extractedFields) && data.extractedFields.length > 0) {
                       return data.extractedFields.length;
                     }
-                    
+
                     return 0;
                   })()}</p>
                   {extractionTime !== null && (
                     <p className="flex items-center gap-1">
                       <Clock className="w-3 h-3 text-muted-foreground" />
-                      <span className="text-muted-foreground">Extraction time:</span> 
+                      <span className="text-muted-foreground">Extraction time:</span>
                       <span className="font-medium">
                         {formatExtractionTime(extractionTime)}
                       </span>
@@ -1250,78 +1274,78 @@ export const SimplifiedDocumentWorkflow: React.FC<SimplifiedDocumentWorkflowProp
                   )}
                 </div>
               </div>
-              
+
               <div>
                 <h4 className="font-medium mb-2">Next Steps</h4>
                 <div className="space-y-2">
-                    {console.log('🔍 Rendering buttons - isDataSaved:', isDataSaved, 'isSaving:', isSaving)}
-                    {!isDataSaved ? (
+                  {console.log('🔍 Rendering buttons - isDataSaved:', isDataSaved, 'isSaving:', isSaving)}
+                  {!isDataSaved ? (
+                    <Button
+                      size="sm"
+                      className="w-full bg-primary"
+                      onClick={handleSaveToDatabase}
+                      disabled={isSaving}
+                    >
+                      {isSaving ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Database className="w-4 h-4 mr-2" />
+                          Save to Database
+                        </>
+                      )}
+                    </Button>
+                  ) : (
+                    <div className="space-y-2">
                       <Button
-                        size="sm" 
-                        className="w-full bg-primary"
-                        onClick={handleSaveToDatabase}
-                        disabled={isSaving}
+                        size="sm"
+                        className="w-full bg-green-600 hover:bg-green-700 text-white"
+                        disabled
                       >
-                        {isSaving ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Saving...
-                          </>
-                        ) : (
-                          <>
-                            <Database className="w-4 h-4 mr-2" />
-                            Save to Database
-                          </>
-                        )}
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        Data Saved Successfully
                       </Button>
-                    ) : (
-                      <div className="space-y-2">
-                        <Button
-                          size="sm" 
-                          className="w-full bg-green-600 hover:bg-green-700 text-white"
-                          disabled
-                        >
-                          <CheckCircle className="w-4 h-4 mr-2" />
-                          Data Saved Successfully
-                        </Button>
-                        <p className="text-xs text-green-600 text-center">
-                          ✓ Document saved to database
-                        </p>
-                      </div>
-                    )}
-                    {!isEditingData ? (
-                      <Button
-                        size="sm" 
-                        className="w-full"
-                        onClick={() => {
-                          setIsEditingData(true);
-                          setIsDataSaved(false); // Reset save status when editing starts
-                        }}
-                      >
-                        <Edit className="w-4 h-4 mr-2" />
-                        Edit Data
-                      </Button>
-                    ) : (
-                      <div className="space-y-2">
-                        <Button
-                          size="sm" 
-                          className="w-full bg-green-600 hover:bg-green-700 text-white"
-                          onClick={() => setIsEditingData(false)}
-                        >
-                          <CheckCircle className="w-4 h-4 mr-2" />
-                          Done Editing
-                        </Button>
-                        <p className="text-xs text-green-600 text-center">
-                          ✓ Data editing mode active
-                        </p>
-                      </div>
-                    )}
-                    <PreviewImagesButton
-                      documentData={(globalExtractedData || documentData)?.preprocessedImage || ''}
-                      convertedImages={convertedImages}
+                      <p className="text-xs text-green-600 text-center">
+                        ✓ Document saved to database
+                      </p>
+                    </div>
+                  )}
+                  {!isEditingData ? (
+                    <Button
                       size="sm"
                       className="w-full"
-                    />
+                      onClick={() => {
+                        setIsEditingData(true);
+                        setIsDataSaved(false); // Reset save status when editing starts
+                      }}
+                    >
+                      <Edit className="w-4 h-4 mr-2" />
+                      Edit Data
+                    </Button>
+                  ) : (
+                    <div className="space-y-2">
+                      <Button
+                        size="sm"
+                        className="w-full bg-green-600 hover:bg-green-700 text-white"
+                        onClick={() => setIsEditingData(false)}
+                      >
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        Done Editing
+                      </Button>
+                      <p className="text-xs text-green-600 text-center">
+                        ✓ Data editing mode active
+                      </p>
+                    </div>
+                  )}
+                  <PreviewImagesButton
+                    documentData={(globalExtractedData || documentData)?.preprocessedImage || ''}
+                    convertedImages={convertedImages}
+                    size="sm"
+                    className="w-full"
+                  />
                   <Button variant="outline" size="sm" className="w-full" onClick={resetWorkflow}>
                     Process Another Document
                   </Button>

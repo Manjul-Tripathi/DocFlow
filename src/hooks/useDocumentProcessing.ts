@@ -41,13 +41,13 @@ export const useDocumentProcessing = () => {
   const uploadFile = async (file: File, userId: string): Promise<string> => {
     const fileExt = file.name.split('.').pop();
     const fileName = `${userId}/${Date.now()}_${Math.random().toString(36).substring(2)}.${fileExt}`;
-    
+
     const { data, error } = await supabase.storage
       .from('documents')
       .upload(fileName, file);
 
     if (error) throw error;
-    
+
     return data.path;
   };
 
@@ -55,12 +55,12 @@ export const useDocumentProcessing = () => {
     console.debug('[Analyze] Using REAL AI processing for', task);
     console.debug('[Analyze] Document data length:', documentData.length);
     console.debug('[Analyze] Document name:', documentName);
-    
+
     try {
       // Get current user for database saving
       const { data: { user } } = await supabase.auth.getUser();
       console.debug('[Analyze] User ID:', user?.id);
-      
+
       const fastApiUrl = (import.meta as any).env.VITE_FASTAPI_URL;
       if (!fastApiUrl) throw new Error('VITE_FASTAPI_URL is required');
       console.debug('[Analyze] Calling FastAPI backend...', fastApiUrl);
@@ -99,7 +99,7 @@ export const useDocumentProcessing = () => {
   const processDocument = async (file: File) => {
     setIsProcessing(true);
     setProcessedDocument(null);
-    
+
     const initialSteps: ProcessingStep[] = [
       {
         id: 'upload',
@@ -149,8 +149,8 @@ export const useDocumentProcessing = () => {
 
       // Step 1: Upload file
       setCurrentStep(initialSteps[0]);
-      setSteps(prev => prev.map(s => 
-        s.id === 'upload' 
+      setSteps(prev => prev.map(s =>
+        s.id === 'upload'
           ? { ...s, status: 'processing', startTime: Date.now() }
           : s
       ));
@@ -158,15 +158,15 @@ export const useDocumentProcessing = () => {
       // Simulate upload progress
       for (let i = 0; i <= 100; i += 20) {
         await new Promise(resolve => setTimeout(resolve, 200));
-        setSteps(prev => prev.map(s => 
+        setSteps(prev => prev.map(s =>
           s.id === 'upload' ? { ...s, progress: i } : s
         ));
       }
 
       const storagePath = await uploadFile(file, user.id);
-      
-      setSteps(prev => prev.map(s => 
-        s.id === 'upload' 
+
+      setSteps(prev => prev.map(s =>
+        s.id === 'upload'
           ? { ...s, status: 'completed', progress: 100, duration: Date.now() - (s.startTime || 0) }
           : s
       ));
@@ -196,24 +196,24 @@ export const useDocumentProcessing = () => {
           };
           reader.readAsDataURL(file);
         });
-        
-        // Upload a preview image to storage and return a signed URL
-        const uploadPreviewImage = async (dataUrl: string, userId: string): Promise<{ path: string; signedUrl: string }> => {
-          const res = await fetch(dataUrl);
-          const blob = await res.blob();
-          const path = `${userId}/previews/${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
-          const { error: upErr } = await supabase.storage
-            .from('documents')
-            .upload(path, blob, { contentType: 'image/jpeg' });
-          if (upErr) throw upErr;
-          const { data: signed, error: signErr } = await supabase.storage
-            .from('documents')
-            .createSignedUrl(path, 60 * 60);
-          if (signErr || !signed?.signedUrl) throw signErr || new Error('Failed to create signed URL');
-          return { path, signedUrl: signed.signedUrl };
-        };
 
-        // Ensure PDF.js is available (run without worker to avoid stalls)
+      // Upload a preview image to storage and return a signed URL
+      const uploadPreviewImage = async (dataUrl: string, userId: string): Promise<{ path: string; signedUrl: string }> => {
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+        const path = `${userId}/previews/${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+        const { error: upErr } = await supabase.storage
+          .from('documents')
+          .upload(path, blob, { contentType: 'image/jpeg' });
+        if (upErr) throw upErr;
+        const { data: signed, error: signErr } = await supabase.storage
+          .from('documents')
+          .createSignedUrl(path, 60 * 60);
+        if (signErr || !signed?.signedUrl) throw signErr || new Error('Failed to create signed URL');
+        return { path, signedUrl: signed.signedUrl };
+      };
+
+      // Ensure PDF.js is available (run without worker to avoid stalls)
       const ensurePdfJs = async (): Promise<any> => {
         const lib: any = pdfjsLib as any;
         if (!lib || typeof lib.getDocument !== 'function') {
@@ -255,11 +255,11 @@ export const useDocumentProcessing = () => {
 
       const isImage = file.type.startsWith('image/');
       const isPDF = file.type === 'application/pdf';
-      
+
       // Step 2: OCR Processing
       setCurrentStep(initialSteps[1]);
-      setSteps(prev => prev.map(s => 
-        s.id === 'ocr' 
+      setSteps(prev => prev.map(s =>
+        s.id === 'ocr'
           ? { ...s, status: 'processing', startTime: Date.now() }
           : s
       ));
@@ -269,13 +269,13 @@ export const useDocumentProcessing = () => {
       if (isImage) {
         documentDataForAI = await getImageBase64(file);
       } else if (isPDF) {
-        documentDataForAI = await getPDFFirstPageAsImage(file);  
+        documentDataForAI = await getPDFFirstPageAsImage(file);
       }
 
       const ocrResult = await analyzeDocument(documentDataForAI, 'ocr', file.name);
-      
-      setSteps(prev => prev.map(s => 
-        s.id === 'ocr' 
+
+      setSteps(prev => prev.map(s =>
+        s.id === 'ocr'
           ? { ...s, status: 'completed', progress: 100, duration: Date.now() - (s.startTime || 0) }
           : s
       ));
@@ -285,16 +285,16 @@ export const useDocumentProcessing = () => {
 
       // Step 3: Field Detection
       setCurrentStep(initialSteps[2]);
-      setSteps(prev => prev.map(s => 
-        s.id === 'field_detection' 
+      setSteps(prev => prev.map(s =>
+        s.id === 'field_detection'
           ? { ...s, status: 'processing', startTime: Date.now() }
           : s
       ));
 
       const fieldResult = await analyzeDocument(documentDataForAI, 'field_detection', file.name);
-      
-      setSteps(prev => prev.map(s => 
-        s.id === 'field_detection' 
+
+      setSteps(prev => prev.map(s =>
+        s.id === 'field_detection'
           ? { ...s, status: 'completed', progress: 100, duration: Date.now() - (s.startTime || 0) }
           : s
       ));
@@ -304,16 +304,16 @@ export const useDocumentProcessing = () => {
 
       // Step 4: Template Matching
       setCurrentStep(initialSteps[3]);
-      setSteps(prev => prev.map(s => 
-        s.id === 'template_matching' 
+      setSteps(prev => prev.map(s =>
+        s.id === 'template_matching'
           ? { ...s, status: 'processing', startTime: Date.now() }
           : s
       ));
 
       const templateResult = await analyzeDocument(documentDataForAI, 'template_matching', file.name);
-      
-      setSteps(prev => prev.map(s => 
-        s.id === 'template_matching' 
+
+      setSteps(prev => prev.map(s =>
+        s.id === 'template_matching'
           ? { ...s, status: 'completed', progress: 100, duration: Date.now() - (s.startTime || 0) }
           : s
       ));
@@ -323,8 +323,8 @@ export const useDocumentProcessing = () => {
 
       // Step 5: Save to database
       setCurrentStep(initialSteps[4]);
-      setSteps(prev => prev.map(s => 
-        s.id === 'database' 
+      setSteps(prev => prev.map(s =>
+        s.id === 'database'
           ? { ...s, status: 'processing', startTime: Date.now() }
           : s
       ));
@@ -337,10 +337,10 @@ export const useDocumentProcessing = () => {
       };
 
       const confidence = fieldResult?.confidence || 0;
-      
+
       // Extract full text from OCR results for database storage
       const extractedText = ocrResult?.extractedText || '';
-      
+
       // Prepare comprehensive document metadata
       const documentMetadata = {
         fileName: file.name,
@@ -396,15 +396,40 @@ export const useDocumentProcessing = () => {
 
       if (docError) throw docError;
 
+      // Create Version 1 record in document_versions for version comparison feature
+      try {
+        const { error: versionError } = await supabase
+          .from('document_versions')
+          .insert({
+            document_id: docData.id,
+            version_number: 1,
+            content: storagePath,  // Store the storage path to the original file
+            change_summary: 'Initial upload',
+            created_by: user.id,
+            major_version: 1,
+            minor_version: 0,
+          });
+
+        if (versionError) {
+          console.warn('Could not create initial version record:', versionError);
+        } else {
+          console.log('Created version 1 record for document:', docData.id);
+        }
+      } catch (versionCreationError) {
+        // Log but don't fail - the main document save was successful
+        console.warn('Error creating version record:', versionCreationError);
+      }
+
+
       // Generate embeddings for RAG after document is saved
       try {
         const { data: embeddingResult } = await supabase.functions.invoke('generate-embeddings', {
-          body: { 
+          body: {
             text: extractedText,
-            documentId: docData.id 
+            documentId: docData.id
           }
         });
-        
+
         if (embeddingResult?.error) {
           console.error('Embedding generation failed:', embeddingResult.error);
         } else {
@@ -417,8 +442,8 @@ export const useDocumentProcessing = () => {
       // Note: Skipping document_fields table as it's not in current schema
       // Field data is stored in the document metadata instead
 
-      setSteps(prev => prev.map(s => 
-        s.id === 'database' 
+      setSteps(prev => prev.map(s =>
+        s.id === 'database'
           ? { ...s, status: 'completed', progress: 100, duration: Date.now() - (s.startTime || 0) }
           : s
       ));
@@ -437,9 +462,9 @@ export const useDocumentProcessing = () => {
 
     } catch (error) {
       console.error('Document processing error:', error);
-      
-      setSteps(prev => prev.map(s => 
-        s.status === 'processing' 
+
+      setSteps(prev => prev.map(s =>
+        s.status === 'processing'
           ? { ...s, status: 'error', progress: 0 }
           : s
       ));

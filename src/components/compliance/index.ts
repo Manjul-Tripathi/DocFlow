@@ -1,7 +1,14 @@
 export { ComplianceDashboard } from './ComplianceDashboard';
 export { ComplianceLabelCard } from './ComplianceLabelCard';
 export { CreateComplianceLabelDialog } from './CreateComplianceLabelDialog';
+export { EditComplianceLabelDialog } from './EditComplianceLabelDialog';
 export { ComplianceViolationsPanel } from './ComplianceViolationsPanel';
 export { ComplianceAuditLog } from './ComplianceAuditLog';
+export { ComplianceReports } from './ComplianceReports';
 export { ApplyComplianceLabelDialog } from './ApplyComplianceLabelDialog';
 export { ComplianceBadge, ComplianceBadges } from './ComplianceBadge';
+export { ComplianceAutoApplyRules } from './ComplianceAutoApplyRules';
+export { ComplianceNotificationSettings } from './ComplianceNotificationSettings';
+export { ComplianceBulkOperations } from './ComplianceBulkOperations';
+export { ComplianceLabelExpiration } from './ComplianceLabelExpiration';
+export { ComplianceGeoRestrictions } from './ComplianceGeoRestrictions';

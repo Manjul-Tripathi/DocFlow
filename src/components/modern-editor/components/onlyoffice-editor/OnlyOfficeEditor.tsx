@@ -226,8 +226,11 @@ export const OnlyOfficeEditor: React.FC<OnlyOfficeEditorProps> = ({
         },
         onError: (event) => {
           console.error('OnlyOffice error:', event.data);
-          setError(event.data);
-          onError?.(event.data);
+          const errorMessage = typeof event.data === 'string' 
+            ? event.data 
+            : event.data?.errorDescription || JSON.stringify(event.data);
+          setError(errorMessage);
+          onError?.(errorMessage);
         },
         onRequestSaveAs: (event) => {
           console.log('Save as requested:', event.data);

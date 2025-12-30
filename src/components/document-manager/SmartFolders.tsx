@@ -3,6 +3,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -101,7 +107,7 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
         .from('smart_folders')
         .select('*')
         .eq('user_id', user.user.id)
-        .order('created_at', { ascending: true });
+        .order('order_index', { ascending: false });
 
       if (error) {
         // If table doesn't exist, just set empty folders
@@ -173,20 +179,26 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
     const previousFolder = folders[folderIndex - 1];
 
     try {
-      // Swap order_index values
-      await Promise.all([
-        supabase
-          .from('smart_folders')
-          .update({ order_index: previousFolder.order_index })
-          .eq('id', currentFolder.id),
-        supabase
-          .from('smart_folders')
-          .update({ order_index: currentFolder.order_index })
-          .eq('id', previousFolder.id)
-      ]);
+      // Swap order_index values - higher order_index means higher in the list
+      const currentOrderIndex = currentFolder.order_index ?? folderIndex;
+      const previousOrderIndex = previousFolder.order_index ?? (folderIndex - 1);
+      
+      const { error: error1 } = await supabase
+        .from('smart_folders')
+        .update({ order_index: previousOrderIndex })
+        .eq('id', currentFolder.id);
+      
+      const { error: error2 } = await supabase
+        .from('smart_folders')
+        .update({ order_index: currentOrderIndex })
+        .eq('id', previousFolder.id);
+
+      if (error1 || error2) {
+        throw new Error('Failed to update order');
+      }
 
       // Refresh folders list
-      fetchSmartFolders();
+      await fetchSmartFolders();
       
       toast({
         title: "Folder moved",
@@ -210,20 +222,26 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
     const nextFolder = folders[folderIndex + 1];
 
     try {
-      // Swap order_index values
-      await Promise.all([
-        supabase
-          .from('smart_folders')
-          .update({ order_index: nextFolder.order_index })
-          .eq('id', currentFolder.id),
-        supabase
-          .from('smart_folders')
-          .update({ order_index: currentFolder.order_index })
-          .eq('id', nextFolder.id)
-      ]);
+      // Swap order_index values - higher order_index means higher in the list
+      const currentOrderIndex = currentFolder.order_index ?? folderIndex;
+      const nextOrderIndex = nextFolder.order_index ?? (folderIndex + 1);
+      
+      const { error: error1 } = await supabase
+        .from('smart_folders')
+        .update({ order_index: nextOrderIndex })
+        .eq('id', currentFolder.id);
+      
+      const { error: error2 } = await supabase
+        .from('smart_folders')
+        .update({ order_index: currentOrderIndex })
+        .eq('id', nextFolder.id);
+
+      if (error1 || error2) {
+        throw new Error('Failed to update order');
+      }
 
       // Refresh folders list
-      fetchSmartFolders();
+      await fetchSmartFolders();
       
       toast({
         title: "Folder moved",
@@ -349,22 +367,8 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold flex items-center gap-2">
-          <Brain className="w-4 h-4 text-primary" />
-          Smart Folders
-        </h3>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowCreateModal(true)}
-        >
-          <Plus className="w-4 h-4" />
-        </Button>
-      </div>
-
-      // All Documents
+    <div className="space-y-4 border-r border-border pr-4 pb-4">
+      {/* All Documents - Primary Navigation */}
       <Button
         variant={selectedFolder === 'all' ? 'default' : 'ghost'}
         className="w-full justify-start h-auto p-3"
@@ -397,6 +401,24 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
           </div>
         </div>
       </Button>
+
+      {/* Divider */}
+      <div className="border-t border-border my-2"></div>
+
+      {/* Smart Folders Section Header */}
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold flex items-center gap-2 text-sm text-muted-foreground">
+          <Brain className="w-4 h-4 text-primary" />
+          Smart Folders
+        </h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowCreateModal(true)}
+        >
+          <Plus className="w-4 h-4" />
+        </Button>
+      </div>
 
       {folders.length === 0 ? (
         <Card className="p-4 text-center border-dashed">
@@ -446,37 +468,45 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
                   <ChevronDown className="w-4 h-4" />
                 </Button>
               </div>
-              <Button
-                variant={selectedFolder === folder.id ? 'default' : 'ghost'}
-                className="justify-start h-auto p-3 flex-1 min-w-0"
-                onClick={() => onFolderSelect(folder.id)}
-              >
-                <div className="flex items-center gap-2 w-full min-w-0">
-                  <div 
-                    className="p-1 rounded flex-shrink-0"
-                    style={{ 
-                      backgroundColor: `${folder.color}20`,
-                      color: folder.color 
-                    }}
-                  >
-                    {iconMap[folder.icon] || <Folder className="w-4 h-4" />}
-                  </div>
-                  <div className="text-left flex-1 min-w-0">
-                    <div className="font-medium truncate flex items-center gap-1">
-                      <span className="truncate">{folder.name}</span>
-                      {folder.is_smart && (
-                        <Brain className="w-3 h-3 text-primary flex-shrink-0" />
-                      )}
-                    </div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      {folder.document_count} documents
-                    </div>
-                  </div>
-                  <Badge variant="secondary" className="text-xs flex-shrink-0">
-                    {folder.document_count}
-                  </Badge>
-                </div>
-              </Button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={selectedFolder === folder.id ? 'default' : 'ghost'}
+                      className="justify-start h-auto p-3 flex-1 min-w-0"
+                      onClick={() => onFolderSelect(folder.id)}
+                    >
+                      <div className="flex items-center gap-2 w-full min-w-0">
+                        <div 
+                          className="p-1 rounded flex-shrink-0"
+                          style={{ 
+                            backgroundColor: `${folder.color}20`,
+                            color: folder.color 
+                          }}
+                        >
+                          {iconMap[folder.icon] || <Folder className="w-4 h-4" />}
+                        </div>
+                        <div className="text-left flex-1 min-w-0">
+                          <div className="font-medium truncate flex items-center gap-1">
+                            <span className="truncate">{folder.name}</span>
+                            {folder.is_smart && (
+                              <Brain className="w-3 h-3 text-primary flex-shrink-0" />
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            {folder.document_count} documents
+                          </div>
+                        </div>
+                      </div>
+                    </Button>
+                  </TooltipTrigger>
+                  {folder.description && (
+                    <TooltipContent side="right" className="max-w-xs">
+                      <p className="text-sm">{folder.description}</p>
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -515,6 +545,9 @@ export const SmartFolders: React.FC<SmartFoldersProps> = ({
           ))}
         </div>
       )}
+
+      {/* Divider before Recycle Bin */}
+      <div className="border-t border-border my-2"></div>
 
       {/* Recycle Bin */}
       <Button

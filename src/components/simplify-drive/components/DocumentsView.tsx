@@ -29,9 +29,9 @@ export function DocumentsView({
   console.log('📄 DocumentsView: documents count:', documents.length, 'selectedFolder:', selectedFolder);
   
   return (
-    <div className="flex flex-col lg:flex-row gap-6 p-4">
+    <div className="flex flex-col lg:flex-row gap-6 p-4 h-full">
       {aiInsightsEnabled && (
-        <aside className="w-full lg:w-80 space-y-4 flex-shrink-0">
+        <aside className="w-full lg:w-80 flex-shrink-0 flex flex-col gap-0 h-full overflow-y-auto scrollbar-hide">
           <SmartFolders 
             onFolderSelect={onFolderSelect}
             selectedFolder={selectedFolder}
@@ -40,7 +40,7 @@ export function DocumentsView({
         </aside>
       )}
 
-      <main className="flex-1 min-w-0">
+      <main className="flex-1 min-w-0 overflow-y-auto scrollbar-hide">
         {selectedFolder === 'media-browser' ? (
           <MediaBrowser
             documents={documents}

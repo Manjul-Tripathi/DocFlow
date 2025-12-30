@@ -285,11 +285,17 @@ export function useDocumentVersions({ documentId, autoRefresh = true }: UseDocum
     const getTextContent = async (version: any, docData: any): Promise<string> => {
       const content = version.content;
 
-      // Check if content looks like a storage path (contains / or matches UUID pattern)
+      // Check if content looks like a storage path
+      // A storage path must:
+      // 1. Be a string with a forward slash (UUID/filename pattern)
+      // 2. Be relatively short (under 200 chars - paths are like "uuid/filename.pdf")
+      // 3. Not contain spaces (real text usually has spaces)
+      // 4. End with a file extension
       const isStoragePath = typeof content === 'string' &&
-        (content.includes('/') || /^[a-f0-9-]+/.test(content)) &&
-        !content.startsWith('{') && // Not JSON
-        content.length < 500; // Paths should be short
+        content.includes('/') &&  // Must have a slash (UUID/filename format)
+        content.length < 200 &&   // Paths are short
+        !content.includes(' ') && // Real text has spaces
+        /\.(pdf|docx?|xlsx?|txt|png|jpg|jpeg)$/i.test(content); // Must end with file extension
 
       if (isStoragePath && typeof content === 'string') {
         try {
@@ -334,11 +340,45 @@ export function useDocumentVersions({ documentId, autoRefresh = true }: UseDocum
               return '[Unable to extract text from DOCX file]';
             }
           } else if (content.toLowerCase().endsWith('.pdf')) {
-            // For PDF, use document's extracted text if available
+            // For PDF, use backend to extract text and save to database
+            try {
+              const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+              const response = await fetch(`${BACKEND_URL}/api/editor/extract-content`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                  storage_url: urlData.signedUrl,
+                  file_type: 'application/pdf',
+                  document_id: docData?.id, // Pass document ID to save extracted text
+                  version_id: version.id // Pass version ID to save to document_versions
+                }),
+              });
+
+              if (response.ok) {
+                const result = await response.json() as { success: boolean; extracted_text?: string; content?: string };
+                // Use extracted_text from response (plain text, already stored to DB)
+                if (result.success && result.extracted_text) {
+                  return result.extracted_text;
+                }
+                // Fallback to parsing HTML content
+                if (result.success && result.content) {
+                  const tempDiv = document.createElement('div');
+                  tempDiv.innerHTML = result.content;
+                  const extractedText = tempDiv.textContent || tempDiv.innerText || '';
+                  if (extractedText.trim()) {
+                    return extractedText;
+                  }
+                }
+              }
+            } catch (extractError) {
+              console.warn('Error extracting PDF text via backend:', extractError);
+            }
+
+            // Fallback to document's extracted_text if available
             if (docData?.extracted_text) {
               return docData.extracted_text;
             }
-            return '[PDF file - text extraction requires processing]';
+            return '[PDF file - text extraction requires backend processing]';
           } else {
             // Try to read as text
             try {
@@ -391,90 +431,189 @@ export function useDocumentVersions({ documentId, autoRefresh = true }: UseDocum
     const text1 = await getTextContent(v1, doc1Data);
     const text2 = await getTextContent(v2, doc2Data);
 
+    // Debug logging
+    console.log('=== Version Comparison Debug ===');
+    console.log('V1 content from DB:', v1.content?.substring(0, 100));
+    console.log('V2 content from DB:', v2.content?.substring(0, 100));
+    console.log('Text1 length:', text1.length, 'preview:', text1.substring(0, 100));
+    console.log('Text2 length:', text2.length, 'preview:', text2.substring(0, 100));
+    console.log('Are texts identical?', text1 === text2);
+
+    // Helper function to normalize text for comparison (ignore whitespace/formatting differences)
+    const normalizeText = (text: string): string => {
+      return text
+        .toLowerCase()
+        .replace(/\s+/g, '')  // Remove ALL whitespace
+        .replace(/[^\w₹$€£¥0-9]/g, '')  // Keep only alphanumeric and currency
+        .trim();
+    };
+
+    // Extract significant words from text (for word-level comparison)
+    const getSignificantWords = (text: string): Set<string> => {
+      return new Set(
+        text.toLowerCase()
+          .replace(/[^\w\s₹$€£¥0-9]/g, ' ')
+          .split(/\s+/)
+          .filter(w => w.length > 3)  // Only words with 4+ chars
+      );
+    };
+
+    // Create word sets for full documents
+    const words1 = getSignificantWords(text1);
+    const words2 = getSignificantWords(text2);
+
+    // Find words that are ONLY in one version (truly added/removed content)
+    const onlyInV1 = new Set([...words1].filter(w => !words2.has(w)));
+    const onlyInV2 = new Set([...words2].filter(w => !words1.has(w)));
+
+    console.log('Words only in V1:', [...onlyInV1].slice(0, 10));
+    console.log('Words only in V2:', [...onlyInV2].slice(0, 10));
+
+    // Helper: check if a line contains NEW content (words not in other version)
+    const hasNewContent = (line: string, onlyInThisVersion: Set<string>): boolean => {
+      const lineWords = getSignificantWords(line);
+      const newWords = [...lineWords].filter(w => onlyInThisVersion.has(w));
+      // Line has new content if it contains words not in the other version
+      return newWords.length > 0;
+    };
+
+    // Helper: check if a line contains ONLY formatting changes (same words exist in other version)
+    const isOnlyFormattingChange = (line: string, otherVersionWords: Set<string>): boolean => {
+      const lineWords = getSignificantWords(line);
+      if (lineWords.size === 0) return true;
+      // All significant words in this line exist in the other version
+      return [...lineWords].every(w => otherVersionWords.has(w));
+    };
+
+    // Helper function to calculate similarity between two strings (0-1)
+    const getSimilarity = (s1: string, s2: string): number => {
+      const n1 = normalizeText(s1);
+      const n2 = normalizeText(s2);
+      
+      if (n1 === n2) return 1;
+      if (!n1 || !n2) return 0;
+      
+      // Check if one contains significant portion of the other
+      const shorter = n1.length < n2.length ? n1 : n2;
+      const longer = n1.length < n2.length ? n2 : n1;
+      
+      if (longer.includes(shorter) && shorter.length > 5) {
+        return shorter.length / longer.length;
+      }
+      
+      // Word-level similarity
+      const w1 = getSignificantWords(s1);
+      const w2 = getSignificantWords(s2);
+      if (w1.size === 0 || w2.size === 0) return 0;
+      
+      const common = [...w1].filter(w => w2.has(w)).length;
+      return common / Math.max(w1.size, w2.size);
+    };
 
     // Perform line-by-line comparison
     const diffs: VersionDiff[] = [];
-    const lines1 = text1.split('\n');
-    const lines2 = text2.split('\n');
+    const lines1 = text1.split('\n').filter(l => l.trim());
+    const lines2 = text2.split('\n').filter(l => l.trim());
 
     let addedCount = 0, removedCount = 0, modifiedCount = 0, unchangedCount = 0;
-
-    // Use LCS (Longest Common Subsequence) based diff algorithm
-    const maxLen = Math.max(lines1.length, lines2.length);
-    const minLen = Math.min(lines1.length, lines2.length);
 
     // Track which lines from each document have been matched
     const matched1 = new Set<number>();
     const matched2 = new Set<number>();
 
-    // First pass: find exact matches
+    // First pass: find exact matches (after normalization)
     for (let i = 0; i < lines1.length; i++) {
       for (let j = 0; j < lines2.length; j++) {
-        if (!matched2.has(j) && lines1[i].trim() === lines2[j].trim() && lines1[i].trim()) {
+        if (!matched2.has(j) && normalizeText(lines1[i]) === normalizeText(lines2[j])) {
           matched1.add(i);
           matched2.add(j);
-          diffs.push({
-            type: 'unchanged',
-            path: `line ${i + 1}`,
-            oldValue: lines1[i],
-            newValue: lines2[j],
-          });
           unchangedCount++;
           break;
         }
       }
     }
 
-    // Second pass: identify removed lines (in v1 but not matched in v2)
+    // Second pass: find similar lines - mark as modified
     for (let i = 0; i < lines1.length; i++) {
-      if (!matched1.has(i) && lines1[i].trim()) {
-        // Check if there's a similar line in v2 (modified)
-        let foundSimilar = false;
+      if (!matched1.has(i)) {
+        let bestMatch = -1;
+        let bestSimilarity = 0;
+        
         for (let j = 0; j < lines2.length; j++) {
-          if (!matched2.has(j) && lines2[j].trim()) {
-            // Check for similarity (first few words match or significant overlap)
-            const words1 = lines1[i].toLowerCase().split(/\s+/).slice(0, 5).join(' ');
-            const words2 = lines2[j].toLowerCase().split(/\s+/).slice(0, 5).join(' ');
-
-            if (words1.length > 10 && words2.length > 10 &&
-              (words1.includes(words2.substring(0, 20)) || words2.includes(words1.substring(0, 20)))) {
-              matched1.add(i);
-              matched2.add(j);
+          if (!matched2.has(j)) {
+            const similarity = getSimilarity(lines1[i], lines2[j]);
+            if (similarity > bestSimilarity && similarity >= 0.4) {
+              bestSimilarity = similarity;
+              bestMatch = j;
+            }
+          }
+        }
+        
+        if (bestMatch >= 0) {
+          matched1.add(i);
+          matched2.add(bestMatch);
+          
+          // Check if it's a real content change or just formatting
+          if (normalizeText(lines1[i]) !== normalizeText(lines2[bestMatch])) {
+            // Only show as modified if there's actually NEW content (not just reformatting)
+            const lineHasNewV1Content = hasNewContent(lines1[i], onlyInV1);
+            const lineHasNewV2Content = hasNewContent(lines2[bestMatch], onlyInV2);
+            
+            if (lineHasNewV1Content || lineHasNewV2Content) {
               diffs.push({
                 type: 'modified',
                 path: `line ${i + 1}`,
                 oldValue: lines1[i],
-                newValue: lines2[j],
+                newValue: lines2[bestMatch],
               });
               modifiedCount++;
-              foundSimilar = true;
-              break;
+            } else {
+              // Just formatting/restructuring, not real content change
+              unchangedCount++;
             }
+          } else {
+            unchangedCount++;
           }
         }
+      }
+    }
 
-        if (!foundSimilar) {
-          matched1.add(i);
+    // Third pass: check "removed" lines - only mark as removed if it has content NOT in V2
+    for (let i = 0; i < lines1.length; i++) {
+      if (!matched1.has(i)) {
+        matched1.add(i);
+        // Only mark as removed if it contains words that don't exist in V2
+        if (hasNewContent(lines1[i], onlyInV1)) {
           diffs.push({
             type: 'removed',
             path: `line ${i + 1}`,
             oldValue: lines1[i],
           });
           removedCount++;
+        } else {
+          // Content exists in V2 somewhere (just restructured)
+          unchangedCount++;
         }
       }
     }
 
-    // Third pass: identify added lines (in v2 but not matched)
+    // Fourth pass: check "added" lines - only mark as added if it has content NOT in V1
     for (let j = 0; j < lines2.length; j++) {
-      if (!matched2.has(j) && lines2[j].trim()) {
+      if (!matched2.has(j)) {
         matched2.add(j);
-        diffs.push({
-          type: 'added',
-          path: `line ${j + 1}`,
-          newValue: lines2[j],
-        });
-        addedCount++;
+        // Only mark as added if it contains words that don't exist in V1
+        if (hasNewContent(lines2[j], onlyInV2)) {
+          diffs.push({
+            type: 'added',
+            path: `line ${j + 1}`,
+            newValue: lines2[j],
+          });
+          addedCount++;
+        } else {
+          // Content exists in V1 but on different lines - it's just restructured, not added
+          matched2.add(j);
+          unchangedCount++;
+        }
       }
     }
 

@@ -196,9 +196,8 @@ export const CreateComplianceLabelDialog: React.FC<CreateComplianceLabelDialogPr
               <div className="space-y-4">
                 <div>
                   <Label>Compliance Framework</Label>
-                  <div className="grid grid-cols-2 gap-2 mt-2">
+                  <div className="grid grid-cols-2 gap-2 mt-2 max-h-[300px] overflow-y-auto">
                     {(Object.entries(COMPLIANCE_FRAMEWORKS) as [ComplianceFramework, typeof COMPLIANCE_FRAMEWORKS[ComplianceFramework]][])
-                      .slice(0, 6)
                       .map(([key, config]) => (
                         <button
                           key={key}

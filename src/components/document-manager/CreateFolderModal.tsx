@@ -137,6 +137,21 @@ export const CreateFolderModal: React.FC<CreateFolderModalProps> = ({
         };
       }
 
+      // Get the max order_index to put new folders at the top
+      let nextOrderIndex = 1;
+      if (!initialData?.id) {
+        const { data: maxOrderData } = await supabase
+          .from('smart_folders')
+          .select('order_index')
+          .eq('user_id', user.user.id)
+          .order('order_index', { ascending: false })
+          .limit(1);
+        
+        if (maxOrderData && maxOrderData.length > 0 && maxOrderData[0].order_index != null) {
+          nextOrderIndex = maxOrderData[0].order_index + 1;
+        }
+      }
+
       const folderData = {
         user_id: user.user.id,
         name: formData.name.trim(),
@@ -146,7 +161,8 @@ export const CreateFolderModal: React.FC<CreateFolderModalProps> = ({
         icon: formData.icon,
         is_smart: formData.isSmart,
         ai_criteria: aiCriteria,
-        document_count: 0
+        document_count: 0,
+        ...((!initialData?.id) && { order_index: nextOrderIndex })
       };
 
       let data, error;

@@ -299,6 +299,81 @@ class DatabaseService:
                     "error": "Result too complex for database storage"
                 }
 
+            # Extract text from chunks_data for extracted_text field (used for chatbot embeddings)
+            extracted_text = None
+            raw_pdf_text_for_versions = None  # Separate variable for version comparison
+            
+            # Priority 0 (NEW): Extract raw text directly from PDF for version comparison
+            # This ensures V1 and V2 use the same extraction method
+            if document_data and file_type and 'pdf' in file_type.lower():
+                try:
+                    data_url = document_data or ""
+                    if "base64," in data_url:
+                        base64_part = data_url.split("base64,", 1)[1]
+                        file_bytes = base64.b64decode(base64_part)
+                        
+                        import fitz  # PyMuPDF
+                        doc = fitz.open(stream=file_bytes, filetype="pdf")
+                        text_parts = []
+                        for page_num in range(len(doc)):
+                            page = doc[page_num]
+                            text = page.get_text("text", sort=True)  # sort=True for better reading order
+                            if text.strip():
+                                text_parts.append(text.strip())
+                        doc.close()
+                        
+                        raw_pdf_text_for_versions = "\n\n".join(text_parts)
+                        logger.info(f"📝 Extracted raw PDF text for version comparison ({len(raw_pdf_text_for_versions)} chars)")
+                except Exception as pdf_extract_error:
+                    logger.warning(f"Could not extract raw PDF text: {pdf_extract_error}")
+            
+            # Priority 1: Try to extract from chunks_data (for embeddings/text analysis)
+            if chunks_data and len(chunks_data) > 0:
+                # Combine all chunks to get full extracted text
+                extracted_text = "\n\n".join([
+                    chunk.get("chunk", "") for chunk in chunks_data if chunk.get("chunk")
+                ])
+                logger.info(f"📝 Extracted text from {len(chunks_data)} chunks ({len(extracted_text)} chars)")
+            
+            # Priority 2: Try to extract raw text from processing result for PDF documents
+            if not extracted_text and isinstance(result, dict):
+                # Look for raw text in hierarchical_data or field data
+                try:
+                    if 'hierarchical_data' in result:
+                        h_data = result['hierarchical_data']
+                        if isinstance(h_data, dict):
+                            # Try to extract text values from all sections
+                            text_parts = []
+                            for section_key, section_data in h_data.items():
+                                if isinstance(section_data, dict):
+                                    for field_key, field_value in section_data.items():
+                                        if isinstance(field_value, str) and len(field_value.strip()) > 0:
+                                            # Skip base64 and very long values that look like encoded data
+                                            if not field_value.startswith('data:') and len(field_value) < 1000:
+                                                text_parts.append(field_value.strip())
+                            
+                            if text_parts:
+                                extracted_text = " ".join(text_parts)
+                                logger.info(f"📝 Extracted text from hierarchical_data ({len(extracted_text)} chars)")
+                    
+                    # Also try the fields array
+                    if not extracted_text and 'fields' in result:
+                        fields = result['fields']
+                        if isinstance(fields, list):
+                            text_parts = []
+                            for field in fields:
+                                if isinstance(field, dict) and 'value' in field:
+                                    value = field['value']
+                                    if isinstance(value, str) and len(value.strip()) > 0:
+                                        if not value.startswith('data:') and len(value) < 1000:
+                                            text_parts.append(value.strip())
+                            
+                            if text_parts:
+                                extracted_text = " ".join(text_parts)
+                                logger.info(f"📝 Extracted text from fields array ({len(extracted_text)} chars)")
+                except Exception as extract_error:
+                    logger.warning(f"Could not extract text from processing result: {extract_error}")
+
             document = {
                 "user_id": user_id,
                 "file_name": inferred_file_name or "unknown",
@@ -309,6 +384,7 @@ class DatabaseService:
                 "upload_source": "manual",
                 "processing_status": "completed",
                 "analysis_result": safe_result,
+                "extracted_text": extracted_text,  # Store extracted text for chatbot embeddings
                 "created_at": datetime.now().isoformat()
             }
             
@@ -325,6 +401,29 @@ class DatabaseService:
             document_id = document_response.data[0].get("id")
             logger.info(f"✅ Document saved with ID: {document_id}")
             
+            # Create Version 1 record in document_versions for version comparison feature
+            # Use raw_pdf_text_for_versions if available (for consistent comparison with OnlyOffice edits)
+            # Otherwise fall back to extracted_text or storage_path
+            try:
+                version_content = raw_pdf_text_for_versions or extracted_text or storage_path or f"inline://{uuid.uuid4()}"
+                version_record = {
+                    "document_id": document_id,
+                    "version_number": 1,
+                    "content": version_content,  # Store raw PDF text for consistent comparison
+                    "change_summary": "Initial upload",
+                    "created_by": user_id,
+                    "major_version": 1,
+                    "minor_version": 0,
+                }
+                version_response = self.supabase.table("document_versions").insert(version_record).execute()
+                if version_response.data:
+                    content_source = 'raw PDF text' if raw_pdf_text_for_versions else ('extracted text' if extracted_text else 'storage path')
+                    logger.info(f"✅ Created version 1 record for document {document_id} with {content_source} ({len(version_content)} chars)")
+                else:
+                    logger.warning(f"⚠️ Failed to create version 1 record for document {document_id}")
+            except Exception as version_error:
+                logger.warning(f"⚠️ Could not create version 1 record: {version_error}")
+            
             # Hierarchical data is already saved in analysis_result field
             # No need to save individual fields to document_fields table
             logger.info(f"✅ Hierarchical data saved in analysis_result field")
@@ -339,6 +438,7 @@ class DatabaseService:
                     logger.warning(f"⚠️ Failed to save document chunks")
             
             return {"id": document_id}
+
             
         except Exception as e:
             logger.error(f"Error saving to database: {e}")
@@ -353,7 +453,7 @@ class DatabaseService:
     ) -> Optional[Dict[str, Any]]:
         """
         Update existing document in database (for manual save with edited data)
-        This updates the analysis_result and optionally adds vector embeddings
+        This updates the analysis_result, extracted_text and optionally adds vector embeddings
         """
         if not self.supabase:
             logger.warning("Supabase not available, skipping database update")
@@ -393,11 +493,64 @@ class DatabaseService:
                 logger.warning(f"Failed to make result JSON-safe: {e}")
                 safe_result = result
             
+            # Extract text from chunks_data for extracted_text field (used for chatbot embeddings)
+            # This keeps documents.extracted_text always up-to-date with latest version
+            extracted_text = None
+            
+            # Priority 1: Try to extract from chunks_data (for embeddings/text analysis)
+            if chunks_data and len(chunks_data) > 0:
+                extracted_text = "\n\n".join([
+                    chunk.get("chunk", "") for chunk in chunks_data if chunk.get("chunk")
+                ])
+                logger.info(f"📝 Extracted text from {len(chunks_data)} chunks ({len(extracted_text)} chars) for update")
+            
+            # Priority 2: Try to extract raw text from processing result for PDF documents
+            if not extracted_text and isinstance(result, dict):
+                try:
+                    if 'hierarchical_data' in result:
+                        h_data = result['hierarchical_data']
+                        if isinstance(h_data, dict):
+                            # Try to extract text values from all sections
+                            text_parts = []
+                            for section_key, section_data in h_data.items():
+                                if isinstance(section_data, dict):
+                                    for field_key, field_value in section_data.items():
+                                        if isinstance(field_value, str) and len(field_value.strip()) > 0:
+                                            # Skip base64 and very long values that look like encoded data
+                                            if not field_value.startswith('data:') and len(field_value) < 1000:
+                                                text_parts.append(field_value.strip())
+                            
+                            if text_parts:
+                                extracted_text = " ".join(text_parts)
+                                logger.info(f"📝 Extracted text from hierarchical_data ({len(extracted_text)} chars) for update")
+                    
+                    # Also try the fields array
+                    if not extracted_text and 'fields' in result:
+                        fields = result['fields']
+                        if isinstance(fields, list):
+                            text_parts = []
+                            for field in fields:
+                                if isinstance(field, dict) and 'value' in field:
+                                    value = field['value']
+                                    if isinstance(value, str) and len(value.strip()) > 0:
+                                        if not value.startswith('data:') and len(value) < 1000:
+                                            text_parts.append(value.strip())
+                            
+                            if text_parts:
+                                extracted_text = " ".join(text_parts)
+                                logger.info(f"📝 Extracted text from fields array ({len(extracted_text)} chars) for update")
+                except Exception as extract_error:
+                    logger.warning(f"Could not extract text from processing result: {extract_error}")
+            
             # Build update data
             update_data = {
                 "analysis_result": safe_result,
                 "updated_at": datetime.now().isoformat()
             }
+            
+            # Update extracted_text if we have new text (keeps latest version for chatbot)
+            if extracted_text:
+                update_data["extracted_text"] = extracted_text
             
             # All embeddings are stored in document_chunks table only
             logger.debug("📝 Embeddings will be updated in document_chunks table")
@@ -419,7 +572,7 @@ class DatabaseService:
                 else:
                     logger.warning(f"⚠️ Failed to update document chunks")
             
-            logger.info(f"✅ Document {document_id} updated successfully with edited data")
+            logger.info(f"✅ Document {document_id} updated successfully with edited data and extracted_text")
             return {"id": document_id, "updated": True}
             
         except Exception as e:

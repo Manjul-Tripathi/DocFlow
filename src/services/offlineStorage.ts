@@ -34,13 +34,14 @@ interface ChangeLog {
 
 interface SyncQueueItem {
   id: string;
-  operation: 'create' | 'update' | 'delete';
+  operation: 'create' | 'update' | 'delete' | 'upload';
   table: string;
   data: any;
   created_at: string;
   retries: number;
   status: 'pending' | 'syncing' | 'failed';
   local_version?: number;
+  file_blob?: Blob;
 }
 
 interface SimplifyDriveDB extends DBSchema {
@@ -423,4 +424,69 @@ export const getSyncQueueItemsForDocument = async (
   const database = await initOfflineDB();
   const allItems = await database.getAll('sync_queue');
   return allItems.filter(item => item.data?.id === documentId);
+};
+
+// Queue a file upload for later sync
+export const queueFileUpload = async (
+  file: File,
+  metadata: any = {}
+): Promise<string> => {
+  const database = await initOfflineDB();
+  const id = `pending-upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  
+  const queueItem: SyncQueueItem = {
+    id,
+    operation: 'upload',
+    table: 'documents',
+    data: {
+      id,
+      file_name: file.name,
+      file_type: file.type,
+      file_size: file.size,
+      metadata,
+      queued_at: new Date().toISOString(),
+    },
+    created_at: new Date().toISOString(),
+    retries: 0,
+    status: 'pending',
+    file_blob: file,
+  };
+
+  await database.add('sync_queue', queueItem);
+  
+  // Also save as a temporary document so it appears in the list
+  const tempDocument: OfflineDocument = {
+    id,
+    file_name: file.name,
+    file_type: file.type,
+    file_size: file.size,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    extracted_text: '',
+    processing_status: 'pending',
+    metadata: {
+      ...metadata,
+      is_pending_upload: true,
+      queued_at: new Date().toISOString(),
+    },
+    storage_url: null,
+    blob_data: file,
+    cached_at: new Date().toISOString(),
+    is_favorite: false,
+    version: 1,
+    local_version: 1,
+    sync_status: 'pending',
+    last_synced_at: null,
+  };
+  
+  await database.put('documents', tempDocument);
+  
+  return id;
+};
+
+// Get all pending upload items
+export const getPendingUploads = async (): Promise<SyncQueueItem[]> => {
+  const database = await initOfflineDB();
+  const allItems = await database.getAll('sync_queue');
+  return allItems.filter(item => item.operation === 'upload' && item.status === 'pending');
 };
