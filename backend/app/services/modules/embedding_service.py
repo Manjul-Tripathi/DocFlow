@@ -1,6 +1,6 @@
 """
 Embedding Service for generating vector embeddings from document analysis results.
-Uses LiteLLM with OpenAI's text-embedding-ada-002 model for semantic search capabilities.
+Uses LiteLLM with Azure's text-embedding-3-large model for semantic search capabilities.
 """
 
 import os
@@ -27,8 +27,8 @@ class EmbeddingService:
         self.litellm_api_key = env_vars["LITELLM_API_KEY"]
         self.litellm_header_name = env_vars["LITELLM_HEADER_NAME"]
         self.litellm_auth_scheme = env_vars["LITELLM_AUTH_SCHEME"]
-        self.model = "text-embedding-ada-002"
-        self.max_tokens = 8191  # Maximum tokens for ada-002
+        self.model = "azure/text-embedding-ada-002"
+        self.max_tokens = 8191  # Maximum tokens for text-embedding-ada-002
         
         logger.info("✅ EmbeddingService initialized with LiteLLM")
     

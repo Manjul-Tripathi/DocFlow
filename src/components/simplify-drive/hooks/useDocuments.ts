@@ -293,6 +293,7 @@ export function useDocuments(options: UseDocumentsOptions = {}) {
           extracted_text: doc.extracted_text || '',
           processing_status: doc.processing_status || 'pending',
           metadata: doc.metadata || {},
+          analysis_result: doc.analysis_result || {},
           storage_url: doc.storageUrl,
           storage_path: doc.storage_path,
           insights: insights,

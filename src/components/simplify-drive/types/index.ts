@@ -8,6 +8,7 @@ export interface Document {
   extracted_text: string;
   processing_status: string;
   metadata: Record<string, any>;
+  analysis_result?: Record<string, any>;
   storage_url?: string | null;
   storage_path?: string;
   insights?: DocumentInsight;

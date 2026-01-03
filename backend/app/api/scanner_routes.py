@@ -22,6 +22,7 @@ class ScannerInfo(BaseModel):
     model: str
     capabilities: Dict[str, Any]
     status: str
+    port: int
 
 class VerifyScannerResponse(BaseModel):
     success: bool
@@ -30,6 +31,7 @@ class VerifyScannerResponse(BaseModel):
 
 class ScanRequest(BaseModel):
     ipAddress: str
+    port: Optional[int] = 80
     resolution: Optional[int] = 300
     colorMode: Optional[str] = "color"
     format: Optional[str] = "pdf"
@@ -73,24 +75,11 @@ async def verify_scanner(request: VerifyScannerRequest):
                 logger.debug(f"Failed to check {ip}:{port} - {e}")
                 continue
     
-    # If we get here, scanner wasn't found but we'll still add it
-    # The user knows their scanner's IP, trust them
+    # No scanner found at this IP address
     return VerifyScannerResponse(
-        success=True,
-        scanner=ScannerInfo(
-            name=f"Network Scanner ({ip})",
-            manufacturer="Unknown",
-            model="Network Scanner",
-            capabilities={
-                "maxResolution": 600,
-                "colorModes": ["color", "grayscale"],
-                "paperSizes": ["A4", "Letter"],
-                "duplex": False,
-                "adf": True
-            },
-            status="online"
-        ),
-        error="Could not auto-detect scanner info, using default settings"
+        success=False,
+        scanner=None,
+        error=f"No eSCL/AirPrint compatible scanner found at {ip}. Please verify the IP address and ensure the scanner is powered on and connected to the network."
     )
 
 
@@ -213,7 +202,8 @@ def parse_escl_capabilities(xml_content: str, ip: str, port: int) -> ScannerInfo
             "duplex": duplex,
             "adf": adf
         },
-        status="online"
+        status="online",
+        port=port
     )
 
 
@@ -247,19 +237,38 @@ async def scan_document(request: ScanRequest):
   <scan:CompressionFactor>25</scan:CompressionFactor>
 </scan:ScanSettings>'''
     
+    port = request.port or 80
+    
     try:
         async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
-            # Create scan job
-            job_response = await client.post(
-                f"http://{ip}/eSCL/ScanJobs",
-                content=scan_settings_xml,
-                headers={"Content-Type": "text/xml"}
-            )
+            # Try multiple ports if the default doesn't work
+            ports_to_try = [port, 80, 8080, 60000] if port != 80 else [80, 8080, 60000]
             
-            if job_response.status_code not in [200, 201]:
+            job_response = None
+            working_port = None
+            
+            for try_port in ports_to_try:
+                try:
+                    # Create scan job
+                    job_response = await client.post(
+                        f"http://{ip}:{try_port}/eSCL/ScanJobs",
+                        content=scan_settings_xml,
+                        headers={"Content-Type": "text/xml"},
+                        timeout=10.0
+                    )
+                    
+                    if job_response.status_code in [200, 201]:
+                        working_port = try_port
+                        logger.info(f"Scan job created successfully on port {try_port}")
+                        break
+                except Exception as e:
+                    logger.debug(f"Port {try_port} failed: {e}")
+                    continue
+            
+            if not job_response or job_response.status_code not in [200, 201]:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Failed to create scan job: {job_response.status_code}"
+                    detail=f"Failed to create scan job on any port. Scanner may not support eSCL scanning or is busy."
                 )
             
             # Get job location from headers
@@ -292,19 +301,24 @@ async def scan_document(request: ScanRequest):
                 }
             )
             
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as e:
+        logger.error(f"Scanner timeout at {ip}: {e}")
         raise HTTPException(
             status_code=408,
-            detail="Scanner timeout - make sure scanner is ready"
+            detail="Scanner timeout - make sure scanner is ready and powered on"
         )
-    except httpx.ConnectError:
+    except httpx.ConnectError as e:
+        logger.error(f"Cannot connect to scanner at {ip}: {e}")
         raise HTTPException(
             status_code=503,
-            detail=f"Cannot connect to scanner at {ip}"
+            detail=f"Cannot connect to scanner at {ip}. Check that the scanner is powered on and the IP is correct."
         )
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
-        logger.error(f"Scan error: {e}")
+        logger.error(f"Scan error at {ip}: {type(e).__name__}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Scanning failed: {str(e)}"
+            detail=f"Scanning failed: {type(e).__name__}: {str(e)}"
         )

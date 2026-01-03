@@ -85,6 +85,24 @@ export function SimplifyDrive() {
 
   // Pending uploads state
   const [pendingUploads, setPendingUploads] = useState<any[]>([]);
+  
+  // Track active uploads for processing banner
+  const [activeUploadsCount, setActiveUploadsCount] = useState(0);
+
+  // Auto-refresh documents while actively processing or uploading
+  React.useEffect(() => {
+    const hasProcessingDocs = documents.some(doc => 
+      doc.processing_status === 'processing'
+    );
+
+    if (hasProcessingDocs || activeUploadsCount > 0) {
+      const interval = setInterval(() => {
+        refetch();
+      }, 2000); // Refresh every 2 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [documents, refetch, activeUploadsCount]);
 
   // Load pending uploads when sync dialog should show
   React.useEffect(() => {
@@ -135,17 +153,38 @@ export function SimplifyDrive() {
       refetch();
     };
     
+    // Listen for upload started/completed events
+    const handleUploadStarted = (event: CustomEvent) => {
+      const count = event.detail?.count || 1;
+      console.log('📤 Upload started:', count);
+      setActiveUploadsCount(prev => prev + count);
+    };
+    
+    const handleUploadCompleted = (event: CustomEvent) => {
+      const count = event.detail?.count || 1;
+      console.log('✅ Upload completed:', count);
+      setActiveUploadsCount(prev => Math.max(0, prev - count));
+      refetch();
+    };
+    
     window.addEventListener('documents-changed', handleDocumentsChanged);
-    return () => window.removeEventListener('documents-changed', handleDocumentsChanged);
+    window.addEventListener('upload-started', handleUploadStarted as EventListener);
+    window.addEventListener('upload-completed', handleUploadCompleted as EventListener);
+    
+    return () => {
+      window.removeEventListener('documents-changed', handleDocumentsChanged);
+      window.removeEventListener('upload-started', handleUploadStarted as EventListener);
+      window.removeEventListener('upload-completed', handleUploadCompleted as EventListener);
+    };
   }, [refetch]);
 
   // Handlers
-  const handleDocumentProcessed = useCallback((documentId: string) => {
+  const handleDocumentProcessed = useCallback((_documentId: string) => {
     setShowUploadModal(false);
     refetch();
     toast({
       title: "Document uploaded successfully",
-      description: "Your document has been processed and organized automatically",
+      description: "Your document has been processed and saved",
     });
   }, [refetch, toast]);
 
@@ -195,60 +234,133 @@ export function SimplifyDrive() {
         throw new Error('User not authenticated');
       }
 
+      // Get AI options from the first page (they're all the same)
+      const enableRAG = pages[0]?.enableRAG || false;
+      const enableClassification = pages[0]?.enableClassification || false;
+      const customFileName = pages[0]?.customFileName;
+
+      // Set active uploads count to show processing banner immediately
+      setActiveUploadsCount(pages.length);
+
       toast({
-        title: "Uploading scanned documents...",
-        description: `Processing ${pages.length} page(s)`,
+        title: "Uploading documents...",
+        description: `${pages.length} document(s) being processed${enableRAG ? ' with RAG indexing' : ''}`,
       });
 
       for (let i = 0; i < pages.length; i++) {
         const page = pages[i];
 
-        // Convert data URL to blob
+        // Convert object URL or data URL to blob
         const response = await fetch(page.fullImage);
         const blob = await response.blob();
 
-        // Create file from blob
-        const file = new File([blob], page.fileName, { type: blob.type });
+        // Use custom file name if provided
+        const finalFileName = pages.length === 1 
+          ? `${customFileName || 'scanned'}.pdf`
+          : `${customFileName || 'scanned'}_page${i + 1}.pdf`;
 
-        // Upload to Supabase storage
-        const fileName = `${user.data.user.id}/${Date.now()}_${page.fileName}`;
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from('documents')
-          .upload(fileName, file);
+        // If RAG or classification is enabled, use backend processing
+        if (enableRAG || enableClassification) {
+          try {
+            // Convert blob to base64
+            const reader = new FileReader();
+            const fileBase64 = await new Promise<string>((resolve) => {
+              reader.onload = () => resolve(reader.result as string);
+              reader.readAsDataURL(blob);
+            });
 
-        if (uploadError) {
-          throw uploadError;
-        }
+            // Use the same endpoint as regular upload
+            const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+            
+            const analysisResponse = await fetch(`${backendUrl}/api/v1/analyze-document`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                documentData: fileBase64,
+                documentName: finalFileName,
+                task: 'without_template_extraction',
+                userId: user.data.user.id,
+                saveToDatabase: true,
+                yoloSignatureEnabled: false,
+                yoloFaceEnabled: false,
+                metadata: {
+                  source: 'scanner',
+                  page_number: page.pageNumber,
+                  rotation: page.rotation,
+                }
+              }),
+            });
 
-        // Create document record
-        const { error: insertError } = await supabase
-          .from('documents')
-          .insert({
-            user_id: user.data.user.id,
-            file_name: page.fileName,
-            file_type: blob.type,
-            file_size: file.size,
-            storage_path: fileName,
-            processing_status: 'pending',
-            metadata: {
-              source: 'scanner',
-              page_number: page.pageNumber,
-              rotation: page.rotation,
+            if (!analysisResponse.ok) {
+              throw new Error('Backend processing failed');
             }
-          });
 
-        if (insertError) {
-          throw insertError;
+            console.log(`Scanned page ${i + 1} processed and saved via backend`);
+            
+            // Update active uploads count as each completes
+            setActiveUploadsCount(prev => Math.max(0, prev - 1));
+            
+            // Refetch after each upload completes to show new document
+            refetch();
+          } catch (e) {
+            console.error('Backend processing failed:', e);
+            setActiveUploadsCount(prev => Math.max(0, prev - 1));
+            throw e;
+          }
+        } else {
+          // Simple upload without AI processing
+          const file = new File([blob], finalFileName, { type: blob.type || 'application/pdf' });
+          const storagePath = `${user.data.user.id}/${Date.now()}_${finalFileName}`;
+          
+          const { error: uploadError } = await supabase.storage
+            .from('documents')
+            .upload(storagePath, file);
+
+          if (uploadError) {
+            setActiveUploadsCount(prev => Math.max(0, prev - 1));
+            throw uploadError;
+          }
+
+          const { error: insertError } = await supabase
+            .from('documents')
+            .insert({
+              user_id: user.data.user.id,
+              file_name: finalFileName,
+              file_type: blob.type || 'application/pdf',
+              file_size: file.size,
+              storage_path: storagePath,
+              processing_status: 'completed',
+              metadata: {
+                source: 'scanner',
+                page_number: page.pageNumber,
+                rotation: page.rotation,
+              }
+            });
+
+          if (insertError) {
+            setActiveUploadsCount(prev => Math.max(0, prev - 1));
+            throw insertError;
+          }
+          
+          // Update count and refetch
+          setActiveUploadsCount(prev => Math.max(0, prev - 1));
+          refetch();
         }
       }
 
+      // Ensure uploads count is reset
+      setActiveUploadsCount(0);
+      
+      // Final refetch to ensure all documents are shown
       refetch();
+      
       toast({
-        title: "Documents uploaded successfully",
-        description: `${pages.length} page(s) uploaded and processing started`,
+        title: "Upload complete!",
+        description: `${pages.length} document(s) uploaded successfully`,
       });
     } catch (error) {
       console.error('Failed to upload scanned documents:', error);
+      setActiveUploadsCount(0);
       throw error;
     }
   }, [refetch, toast]);
@@ -263,6 +375,15 @@ export function SimplifyDrive() {
   }
 
   const isDocumentsView = activeFeature === 'documents';
+  
+  // Check for actively processing documents (only 'processing' status, not 'pending')
+  // 'pending' is the default status for all documents, so we only show banner for actual active processing
+  const processingDocs = documents.filter(doc => 
+    doc.processing_status === 'processing'
+  );
+  
+  // Total processing count: backend processing + active uploads
+  const totalProcessingCount = processingDocs.length + activeUploadsCount;
 
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
@@ -271,6 +392,21 @@ export function SimplifyDrive() {
         activeFeature={activeFeature}
         onFeatureChange={setActiveFeature}
       />
+
+      {/* Processing Indicator Banner */}
+      {isDocumentsView && totalProcessingCount > 0 && (
+        <div className="bg-blue-50 dark:bg-blue-950 border-b border-blue-200 dark:border-blue-800 px-4 py-2">
+          <div className="flex items-center justify-center gap-2 text-sm text-blue-700 dark:text-blue-300">
+            <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>
+              Processing {totalProcessingCount} document{totalProcessingCount > 1 ? 's' : ''} in the background...
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Header - Only show on documents view */}
       {isDocumentsView && (

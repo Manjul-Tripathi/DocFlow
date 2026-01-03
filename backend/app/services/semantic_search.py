@@ -144,7 +144,7 @@ class SemanticSearchService:
             }
             
             request_body = {
-                "model": "text-embedding-ada-002",
+                "model": "azure/text-embedding-ada-002",
                 "input": text
             }
             

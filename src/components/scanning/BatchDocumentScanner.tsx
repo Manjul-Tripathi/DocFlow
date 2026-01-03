@@ -42,7 +42,9 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
-  Maximize2
+  Maximize2,
+  Brain,
+  Sparkles
 } from 'lucide-react';
 import { ScannerConfigurationPanel, ScannerDevice, ScanSettings } from './ScannerConfigurationPanel';
 
@@ -122,7 +124,11 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
   const [isScanning, setIsScanning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [batchName, setBatchName] = useState('');
+  const [uploadFileName, setUploadFileName] = useState('');
+  const [enableRAG, setEnableRAG] = useState(true);
+  const [enableClassification, setEnableClassification] = useState(false);
   const [zoom, setZoom] = useState(100);
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -199,42 +205,37 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
         format: scanSettings.outputFormat,
       });
 
-      // Convert blob to data URL for preview
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const dataUrl = reader.result as string;
-        const pageNum = (currentBatch?.pages.length || 0) + 1;
+      // Create object URL for preview (works for both images and PDFs)
+      const objectUrl = URL.createObjectURL(scannedDoc.data);
+      const pageNum = (currentBatch?.pages.length || 0) + 1;
 
-        const newPage: ScannedPage = {
-          id: scannedDoc.id,
-          pageNumber: pageNum,
-          thumbnail: dataUrl,
-          fullImage: dataUrl,
-          status: 'complete',
-          fileName: scannedDoc.fileName,
-          fileSize: scannedDoc.data.size,
-          dimensions: { width: 2480, height: 3508 },
-          rotation: 0,
-          isBlank: false,
-        };
-
-        setCurrentBatch(prev => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            pages: [...prev.pages, newPage],
-            scannedPages: prev.scannedPages + 1,
-            totalPages: prev.totalPages + 1,
-            status: 'idle',
-          };
-        });
-
-        toast.success('Document scanned successfully', {
-          description: `${scannedDoc.fileName} (${(scannedDoc.data.size / 1024).toFixed(1)} KB)`,
-        });
+      const newPage: ScannedPage = {
+        id: scannedDoc.id,
+        pageNumber: pageNum,
+        thumbnail: objectUrl,
+        fullImage: objectUrl,
+        status: 'complete',
+        fileName: scannedDoc.fileName,
+        fileSize: scannedDoc.data.size,
+        dimensions: { width: 2480, height: 3508 },
+        rotation: 0,
+        isBlank: false,
       };
 
-      reader.readAsDataURL(scannedDoc.data);
+      setCurrentBatch(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          pages: [...prev.pages, newPage],
+          scannedPages: prev.scannedPages + 1,
+          totalPages: prev.totalPages + 1,
+          status: 'idle',
+        };
+      });
+
+      toast.success('Document scanned successfully', {
+        description: `${scannedDoc.fileName} (${(scannedDoc.data.size / 1024).toFixed(1)} KB)`,
+      });
 
     } catch (error) {
       console.error('Scanning failed:', error);
@@ -314,7 +315,7 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
     }
   };
 
-  const scanSinglePage = () => {
+  const scanSinglePage = async () => {
     if (!selectedScanner) {
       toast.error('Please select a scanner first');
       return;
@@ -324,8 +325,72 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
       createNewBatch();
     }
 
-    simulateScan();
-    toast.success('Page scanned');
+    setIsScanning(true);
+    toast.info('Scanning page...', {
+      description: 'Please wait while the scanner processes your document'
+    });
+
+    try {
+      // Perform actual scan using scanner service
+      const scannedDoc = await scannerService.scanDocument(selectedScanner.id, {
+        resolution: scanSettings.resolution,
+        colorMode: scanSettings.colorMode,
+        paperSize: scanSettings.paperSize,
+        duplex: false, // Single page, no duplex
+        format: scanSettings.outputFormat,
+      });
+
+      // Create object URL for preview
+      const objectUrl = URL.createObjectURL(scannedDoc.data);
+      const pageNum = (currentBatch?.pages.length || 0) + 1;
+
+      const newPage: ScannedPage = {
+        id: scannedDoc.id,
+        pageNumber: pageNum,
+        thumbnail: objectUrl,
+        fullImage: objectUrl,
+        status: 'complete',
+        fileName: scannedDoc.fileName,
+        fileSize: scannedDoc.data.size,
+        dimensions: { width: 2480, height: 3508 },
+        rotation: 0,
+        isBlank: false,
+      };
+
+      setCurrentBatch(prev => {
+        if (!prev) {
+          // Create a new batch if none exists
+          return {
+            id: `batch-${Date.now()}`,
+            name: batchName || `Scan ${new Date().toLocaleString()}`,
+            createdAt: new Date(),
+            pages: [newPage],
+            status: 'idle',
+            settings: scanSettings,
+            totalPages: 1,
+            scannedPages: 1
+          };
+        }
+        return {
+          ...prev,
+          pages: [...prev.pages, newPage],
+          scannedPages: prev.scannedPages + 1,
+          totalPages: prev.totalPages + 1,
+          status: 'idle',
+        };
+      });
+
+      toast.success('Page scanned successfully', {
+        description: `${scannedDoc.fileName} (${(scannedDoc.data.size / 1024).toFixed(1)} KB)`,
+      });
+    } catch (error) {
+      console.error('Single page scan failed:', error);
+      toast.error('Scan failed', {
+        description: error instanceof Error ? error.message : 'Unknown error occurred',
+      });
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   const togglePageSelection = (pageId: string) => {
@@ -411,18 +476,65 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
+  const openUploadDialog = () => {
+    if (!currentBatch || currentBatch.pages.length === 0) {
+      toast.error('No pages to upload');
+      return;
+    }
+    // Set default file name from batch name
+    setUploadFileName(currentBatch.name || `Scan_${new Date().toISOString().slice(0, 10)}`);
+    setShowUploadDialog(true);
+  };
+
   const handleUpload = async () => {
     if (!currentBatch || currentBatch.pages.length === 0) return;
     
     try {
       if (onUploadToStorage) {
-        await onUploadToStorage(currentBatch.pages);
+        // Pass the file name and AI options along with pages
+        const pagesWithOptions = currentBatch.pages.map((page, index) => ({
+          ...page,
+          fileName: currentBatch.pages.length === 1 
+            ? `${uploadFileName || 'scanned'}.pdf`
+            : `${uploadFileName || 'scanned'}_page${index + 1}.pdf`,
+          enableRAG,
+          enableClassification,
+          customFileName: uploadFileName,
+        }));
+        await onUploadToStorage(pagesWithOptions);
       }
       toast.success('Documents uploaded successfully', {
-        description: `${currentBatch.pages.length} pages uploaded to SimplifyDrive`
+        description: `${currentBatch.pages.length} pages uploaded to SimplifyDrive${enableRAG ? ' with RAG indexing' : ''}${enableClassification ? ' with auto-classification' : ''}`
       });
+      setShowUploadDialog(false);
     } catch (error) {
       toast.error('Upload failed', {
+        description: 'Please try again'
+      });
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!currentBatch || currentBatch.pages.length === 0) return;
+    
+    try {
+      // If there's only one page and it's a PDF, download it directly
+      if (currentBatch.pages.length === 1 && currentBatch.pages[0].fileName.endsWith('.pdf')) {
+        const page = currentBatch.pages[0];
+        const link = document.createElement('a');
+        link.href = page.fullImage;
+        link.download = `${uploadFileName || currentBatch.name || 'scanned'}.pdf`;
+        link.click();
+        toast.success('PDF downloaded successfully');
+        return;
+      }
+
+      // For multiple pages or images, need to combine them (this would require a PDF library)
+      toast.info('Multi-page PDF creation coming soon', {
+        description: 'For now, upload to SimplifyDrive to combine pages'
+      });
+    } catch (error) {
+      toast.error('Download failed', {
         description: 'Please try again'
       });
     }
@@ -619,7 +731,7 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
           <div className="mt-auto p-4 border-t space-y-2">
             <Button 
               className="w-full" 
-              onClick={handleUpload}
+              onClick={openUploadDialog}
               disabled={!currentBatch || currentBatch.pages.length === 0 || isScanning}
             >
               <Upload className="h-4 w-4 mr-2" />
@@ -628,6 +740,7 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
             <Button 
               variant="outline" 
               className="w-full"
+              onClick={handleDownload}
               disabled={!currentBatch || currentBatch.pages.length === 0}
             >
               <Download className="h-4 w-4 mr-2" />
@@ -689,99 +802,129 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
               <div 
                 className="grid gap-4"
                 style={{
-                  gridTemplateColumns: `repeat(auto-fill, minmax(${100 * zoom / 100}px, 1fr))`
+                  gridTemplateColumns: `repeat(auto-fill, minmax(${120 * zoom / 100}px, 1fr))`
                 }}
               >
                 {currentBatch.pages.map((page) => (
                   <div
                     key={page.id}
-                    className={`relative group cursor-pointer rounded-lg border-2 transition-all ${
+                    className={`relative rounded-lg border-2 transition-all overflow-hidden bg-card ${
                       selectedPages.has(page.id) 
                         ? 'border-primary ring-2 ring-primary/20' 
                         : 'border-border hover:border-primary/50'
                     }`}
-                    onClick={() => togglePageSelection(page.id)}
-                    onDoubleClick={() => setPreviewPage(page)}
                   >
-                    {/* Checkbox */}
-                    <div className="absolute top-2 left-2 z-10">
-                      <Checkbox
-                        checked={selectedPages.has(page.id)}
-                        onCheckedChange={() => togglePageSelection(page.id)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </div>
-
-                    {/* Page Number */}
-                    <div className="absolute top-2 right-2 z-10">
-                      <Badge variant="secondary" className="text-xs">
-                        {page.pageNumber}
-                      </Badge>
-                    </div>
-
-                    {/* Thumbnail */}
+                    {/* Thumbnail Container */}
                     <div 
-                      className="aspect-[1/1.414] bg-muted rounded-lg overflow-hidden"
+                      className="aspect-[1/1.414] bg-muted overflow-hidden cursor-pointer"
                       style={{ transform: `rotate(${page.rotation}deg)` }}
+                      onClick={() => togglePageSelection(page.id)}
+                      onDoubleClick={() => setPreviewPage(page)}
                     >
-                      <img
-                        src={page.thumbnail}
-                        alt={`Page ${page.pageNumber}`}
-                        className="w-full h-full object-cover"
-                      />
+                      {page.fileName.endsWith('.pdf') ? (
+                        <object
+                          data={page.thumbnail}
+                          type="application/pdf"
+                          className="w-full h-full pointer-events-none"
+                        >
+                          <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                            <FileText className="h-12 w-12 text-gray-400" />
+                          </div>
+                        </object>
+                      ) : (
+                        <img
+                          src={page.thumbnail}
+                          alt={`Page ${page.pageNumber}`}
+                          className="w-full h-full object-cover"
+                        />
+                      )}
+
+                      {/* Status Indicator */}
+                      {page.status === 'scanning' && (
+                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                          <Loader2 className="h-8 w-8 text-white animate-spin" />
+                        </div>
+                      )}
                     </div>
 
-                    {/* Hover Actions */}
-                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPreviewPage(page);
-                        }}
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          rotatePage(page.id, 'cw');
-                        }}
-                      >
-                        <RotateCw className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setCurrentBatch(prev => {
-                            if (!prev) return prev;
-                            return {
-                              ...prev,
-                              pages: prev.pages.filter(p => p.id !== page.id)
-                                .map((p, idx) => ({ ...p, pageNumber: idx + 1 }))
-                            };
-                          });
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-
-                    {/* Status Indicator */}
-                    {page.status === 'scanning' && (
-                      <div className="absolute inset-0 bg-black/30 flex items-center justify-center rounded-lg">
-                        <Loader2 className="h-8 w-8 text-white animate-spin" />
+                    {/* Info Bar Below Thumbnail */}
+                    <div className="p-2 bg-card border-t">
+                      {/* Page Number & Selection */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            checked={selectedPages.has(page.id)}
+                            onCheckedChange={() => togglePageSelection(page.id)}
+                            className="h-4 w-4"
+                          />
+                          <Badge variant="secondary" className="text-xs px-1.5 py-0.5">
+                            Page {page.pageNumber}
+                          </Badge>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">
+                          {formatFileSize(page.fileSize)}
+                        </span>
                       </div>
-                    )}
 
-                    {/* File Info */}
-                    <div className="p-2 text-xs text-muted-foreground truncate">
-                      {formatFileSize(page.fileSize)}
+                      {/* Action Buttons */}
+                      <div className="flex items-center justify-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewPage(page);
+                          }}
+                          title="Preview"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            rotatePage(page.id, 'ccw');
+                          }}
+                          title="Rotate Left"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            rotatePage(page.id, 'cw');
+                          }}
+                          title="Rotate Right"
+                        >
+                          <RotateCw className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCurrentBatch(prev => {
+                              if (!prev) return prev;
+                              return {
+                                ...prev,
+                                pages: prev.pages.filter(p => p.id !== page.id)
+                                  .map((p, idx) => ({ ...p, pageNumber: idx + 1 }))
+                              };
+                            });
+                            toast.success('Page deleted');
+                          }}
+                          title="Delete"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -804,11 +947,19 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
                 className="flex-1 bg-muted rounded-lg overflow-hidden flex items-center justify-center"
                 style={{ transform: `rotate(${previewPage.rotation}deg)` }}
               >
-                <img
-                  src={previewPage.fullImage}
-                  alt={`Page ${previewPage.pageNumber}`}
-                  className="max-w-full max-h-full object-contain"
-                />
+                {previewPage.fileName.endsWith('.pdf') ? (
+                  <embed
+                    src={previewPage.fullImage}
+                    type="application/pdf"
+                    className="w-full h-full"
+                  />
+                ) : (
+                  <img
+                    src={previewPage.fullImage}
+                    alt={`Page ${previewPage.pageNumber}`}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                )}
               </div>
               <div className="mt-4 space-y-3">
                 <div className="flex items-center justify-between text-sm">
@@ -852,6 +1003,101 @@ export const BatchDocumentScanner: React.FC<BatchDocumentScannerProps> = ({
           </div>
         )}
       </div>
+
+      {/* Upload to SimplifyDrive Dialog */}
+      <Dialog open={showUploadDialog} onOpenChange={setShowUploadDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save to SimplifyDrive</DialogTitle>
+            <DialogDescription>
+              {currentBatch?.pages.length || 0} page(s) will be uploaded
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {/* File Name Input */}
+            <div className="space-y-2">
+              <Label htmlFor="fileName">File Name</Label>
+              <Input
+                id="fileName"
+                placeholder="Enter file name..."
+                value={uploadFileName}
+                onChange={(e) => setUploadFileName(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Will be saved as: {uploadFileName || 'scanned'}.pdf
+              </p>
+            </div>
+
+            {/* AI Options */}
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">AI Processing Options</Label>
+              
+              {/* Enable RAG */}
+              <div
+                className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                  enableRAG ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/50 bg-card'
+                }`}
+                onClick={() => setEnableRAG(!enableRAG)}
+              >
+                <Checkbox
+                  id="rag-toggle-scan"
+                  checked={enableRAG}
+                  onCheckedChange={(checked) => setEnableRAG(checked as boolean)}
+                  className="h-4 w-4 flex-shrink-0"
+                />
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <Brain className="h-4 w-4 text-primary flex-shrink-0" />
+                  <div className="min-w-0">
+                    <Label htmlFor="rag-toggle-scan" className="text-sm font-medium cursor-pointer block">
+                      Enable RAG (AI Search & Chat)
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Index for semantic search
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* AI Auto-Classification */}
+              <div
+                className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                  enableClassification ? 'border-amber-500 bg-amber-500/5' : 'border-border hover:border-muted-foreground/50 bg-card'
+                }`}
+                onClick={() => setEnableClassification(!enableClassification)}
+              >
+                <Checkbox
+                  id="classify-toggle-scan"
+                  checked={enableClassification}
+                  onCheckedChange={(checked) => setEnableClassification(checked as boolean)}
+                  className="h-4 w-4 flex-shrink-0"
+                />
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <Sparkles className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                  <div className="min-w-0">
+                    <Label htmlFor="classify-toggle-scan" className="text-sm font-medium cursor-pointer block">
+                      AI Auto-Classification
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Identify type and route to folder
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Dialog Actions */}
+          <div className="flex gap-3 justify-end">
+            <Button variant="outline" onClick={() => setShowUploadDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpload} disabled={!uploadFileName.trim()}>
+              <Upload className="h-4 w-4 mr-2" />
+              Upload
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -382,7 +382,7 @@ class DatabaseService:
                 "storage_path": storage_path or f"inline://{uuid.uuid4()}",
                 "original_url": None,
                 "upload_source": "manual",
-                "processing_status": "completed",
+                "processing_status": "processing",  # Start as processing, will update to completed after chunks saved
                 "analysis_result": safe_result,
                 "extracted_text": extracted_text,  # Store extracted text for chatbot embeddings
                 "created_at": datetime.now().isoformat()
@@ -436,6 +436,15 @@ class DatabaseService:
                     logger.info(f"✅ Document chunks saved successfully")
                 else:
                     logger.warning(f"⚠️ Failed to save document chunks")
+            
+            # Update processing status to completed now that everything is saved
+            try:
+                self.supabase.table("documents").update({
+                    "processing_status": "completed"
+                }).eq("id", document_id).execute()
+                logger.info(f"✅ Document {document_id} processing_status updated to 'completed'")
+            except Exception as status_error:
+                logger.warning(f"⚠️ Could not update processing_status: {status_error}")
             
             return {"id": document_id}
 

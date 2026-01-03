@@ -99,6 +99,21 @@ class EnsureBucketResponse(BaseModel):
     created: bool
     error: Optional[str] = None
 
+# Process Document (for scanned documents with RAG/Classification)
+class ProcessDocumentRequest(BaseModel):
+    document_id: str
+    user_id: str
+    enable_rag: Optional[bool] = True
+    enable_classification: Optional[bool] = False
+
+class ProcessDocumentResponse(BaseModel):
+    success: bool
+    document_id: str
+    rag_indexed: bool = False
+    classified: bool = False
+    classification: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
 from ..services.modules import DocumentAnalysisService, DocumentTypeDetector, BucketManager, DocumentProcessingOrchestrator, DatabaseService
 from ..services.modules.semantic_search_service import SemanticSearchService
 from ..services.modules.rag_service import RAGService
@@ -467,6 +482,121 @@ async def generate_embeddings(request: GenerateEmbeddingsRequest):
             status_code=500,
             detail=f"Generate embeddings failed: {str(e)}"
         )
+
+
+@analyze_router.post("/process-document", response_model=ProcessDocumentResponse)
+async def process_document(request: ProcessDocumentRequest):
+    """
+    Process a scanned document for RAG indexing and/or auto-classification.
+    This endpoint handles post-upload processing for documents.
+    """
+    try:
+        logger.info(f"Processing document {request.document_id} for user {request.user_id}")
+        logger.info(f"Options - RAG: {request.enable_rag}, Classification: {request.enable_classification}")
+        
+        supabase = get_supabase_client()
+        rag_indexed = False
+        classified = False
+        classification = None
+        
+        # Fetch the document from database
+        doc_result = supabase.table('documents').select('*').eq('id', request.document_id).eq('user_id', request.user_id).single().execute()
+        
+        if not doc_result.data:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        document = doc_result.data
+        
+        # Get document content for processing
+        extracted_text = document.get('extracted_text', '')
+        
+        # If no text, try to extract from storage
+        if not extracted_text and document.get('storage_path'):
+            try:
+                # Download document from storage
+                storage_path = document['storage_path']
+                file_response = supabase.storage.from_('documents').download(storage_path)
+                
+                if file_response:
+                    # Extract text from PDF
+                    pdf_processor = PDFProcessor()
+                    extracted_text = pdf_processor.extract_text_from_bytes(file_response)
+                    
+                    # Update document with extracted text
+                    if extracted_text:
+                        supabase.table('documents').update({
+                            'extracted_text': extracted_text
+                        }).eq('id', request.document_id).execute()
+            except Exception as e:
+                logger.warning(f"Could not extract text from document: {e}")
+        
+        # Process RAG indexing
+        if request.enable_rag and extracted_text:
+            try:
+                result = await generate_embeddings_service.generate_embeddings(
+                    text=extracted_text,
+                    document_id=request.document_id
+                )
+                rag_indexed = result.get('embedding_stored', False)
+                logger.info(f"RAG indexing completed for document {request.document_id}")
+            except Exception as e:
+                logger.error(f"RAG indexing failed: {e}")
+        
+        # Process auto-classification
+        if request.enable_classification and extracted_text:
+            try:
+                # Use document type detector for classification
+                doc_type_detector = DocumentTypeDetector()
+                detected_type = await doc_type_detector.detect_type(
+                    extracted_text=extracted_text,
+                    filename=document.get('file_name', 'document.pdf')
+                )
+                
+                if detected_type:
+                    classification = {
+                        'document_type': detected_type.get('document_type'),
+                        'display_name': detected_type.get('display_name'),
+                        'confidence': detected_type.get('confidence', 0),
+                    }
+                    
+                    # Update document with classification
+                    supabase.table('documents').update({
+                        'document_type': detected_type.get('document_type'),
+                        'metadata': {
+                            **document.get('metadata', {}),
+                            'auto_classified': True,
+                            'classification_confidence': detected_type.get('confidence', 0)
+                        }
+                    }).eq('id', request.document_id).execute()
+                    
+                    classified = True
+                    logger.info(f"Auto-classification completed: {classification}")
+            except Exception as e:
+                logger.error(f"Auto-classification failed: {e}")
+        
+        # Update processing status
+        supabase.table('documents').update({
+            'processing_status': 'completed'
+        }).eq('id', request.document_id).execute()
+        
+        return ProcessDocumentResponse(
+            success=True,
+            document_id=request.document_id,
+            rag_indexed=rag_indexed,
+            classified=classified,
+            classification=classification
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing document: {str(e)}", exc_info=True)
+        return ProcessDocumentResponse(
+            success=False,
+            document_id=request.document_id,
+            error=str(e)
+        )
+
 
 @analyze_router.post("/preview-images", response_model=ImagePreviewResponse)
 async def preview_images(request: ImagePreviewRequest):

@@ -19,6 +19,7 @@ export interface ScannerDevice {
     adfCapacity?: number;
   };
   ipAddress?: string;
+  port?: number;
   lastSeen?: Date;
 }
 
@@ -50,14 +51,19 @@ class ScannerService {
 
   /**
    * Load saved network scanners from localStorage
+   * Note: Scanners are loaded with 'offline' status - they need to be verified
    */
   private loadSavedScanners() {
     try {
       const saved = localStorage.getItem('network_scanners');
       if (saved) {
         const savedScanners = JSON.parse(saved) as ScannerDevice[];
-        this.availableScanners = savedScanners;
-        console.log(`Loaded ${savedScanners.length} saved scanner(s) from localStorage`);
+        // Load with offline status - they will be verified when user opens scanner panel
+        this.availableScanners = savedScanners.map(scanner => ({
+          ...scanner,
+          status: 'offline' as const, // Set to offline until verified
+        }));
+        console.log(`Loaded ${savedScanners.length} saved scanner(s) from localStorage (status: pending verification)`);
       }
     } catch (error) {
       console.error('Failed to load saved scanners:', error);
@@ -475,25 +481,36 @@ class ScannerService {
       },
     };
 
-    // Try to verify scanner with backend proxy (if available)
+    // Verify scanner exists at this IP address via backend
     try {
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
       const response = await fetch(`${backendUrl}/api/scanner/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ipAddress }),
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(10000), // 10 second timeout for scanner verification
       });
       
       if (response.ok) {
         const data = await response.json();
+        
+        // Check if scanner was actually found
+        if (!data.success) {
+          throw new Error(data.error || `No scanner found at ${ipAddress}`);
+        }
+        
         if (data.scanner) {
           scannerInfo = { ...scannerInfo, ...data.scanner };
         }
+      } else {
+        throw new Error(`Failed to verify scanner: ${response.statusText}`);
       }
-    } catch (e) {
-      // Backend verification not available, continue with default info
-      console.log('Scanner verification via backend not available, using default settings');
+    } catch (e: any) {
+      // Re-throw with informative message
+      if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+        throw new Error(`Connection timed out. No scanner responding at ${ipAddress}. Please check that the scanner is online and the IP is correct.`);
+      }
+      throw new Error(e.message || `Unable to connect to scanner at ${ipAddress}. Please ensure it's an eSCL/AirPrint compatible scanner and is powered on.`);
     }
 
     const scanner: ScannerDevice = {
@@ -504,6 +521,7 @@ class ScannerService {
       connectionType: 'network',
       status: 'online',
       ipAddress,
+      port: scannerInfo.port || 80,
       capabilities: scannerInfo.capabilities,
       lastSeen: new Date(),
     };
@@ -515,6 +533,45 @@ class ScannerService {
     localStorage.setItem('network_scanners', JSON.stringify(savedScanners));
 
     return scanner;
+  }
+
+  /**
+   * Verify if a scanner is currently online/available
+   * Makes a request to the backend to check scanner health
+   */
+  async verifyScannerOnline(scanner: ScannerDevice): Promise<boolean> {
+    if (!scanner.ipAddress) {
+      return false;
+    }
+
+    try {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+      const response = await fetch(`${backendUrl}/api/scanner/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ipAddress: scanner.ipAddress }),
+        signal: AbortSignal.timeout(5000), // 5 second timeout
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return data.success === true;
+      }
+      return false;
+    } catch (error) {
+      console.log(`Scanner at ${scanner.ipAddress} is not responding`);
+      return false;
+    }
+  }
+
+  /**
+   * Update scanner status in the list
+   */
+  updateScannerStatus(scannerId: string, status: ScannerDevice['status']) {
+    const scanner = this.availableScanners.find(s => s.id === scannerId);
+    if (scanner) {
+      scanner.status = status;
+    }
   }
 
   /**
@@ -676,6 +733,7 @@ class ScannerService {
         },
         body: JSON.stringify({
           ipAddress: scanner.ipAddress,
+          port: scanner.port || 80,
           resolution: options.resolution || 300,
           colorMode: options.colorMode || 'color',
           format: options.format || 'pdf',

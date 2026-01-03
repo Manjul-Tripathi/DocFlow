@@ -98,10 +98,53 @@ export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps>
   const [networkScannerIp, setNetworkScannerIp] = useState('');
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
 
-  // Auto-detect scanners on mount
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  // Auto-detect scanners on mount and verify their status
   useEffect(() => {
     handleRefreshScanners();
   }, []);
+
+  // Verify all saved scanners when component mounts
+  const verifySavedScanners = async (scannersToVerify: ScannerDevice[]) => {
+    setIsVerifying(true);
+    const verificationPromises = scannersToVerify.map(async (scanner) => {
+      if (scanner.connectionType === 'network' && scanner.ipAddress) {
+        const isOnline = await scannerService.verifyScannerOnline(scanner);
+        return { ...scanner, status: isOnline ? 'online' as const : 'offline' as const };
+      }
+      return scanner;
+    });
+
+    const verifiedScanners = await Promise.all(verificationPromises);
+    setScanners(verifiedScanners);
+
+    // Update scanner service with new statuses
+    verifiedScanners.forEach(scanner => {
+      scannerService.updateScannerStatus(scanner.id, scanner.status);
+    });
+
+    const onlineCount = verifiedScanners.filter(s => s.status === 'online').length;
+    const offlineCount = verifiedScanners.filter(s => s.status === 'offline').length;
+
+    if (verifiedScanners.length > 0) {
+      if (onlineCount === verifiedScanners.length) {
+        toast.success('All scanners online', {
+          description: `${onlineCount} scanner(s) ready to use`,
+        });
+      } else if (onlineCount > 0) {
+        toast.info('Scanner status', {
+          description: `${onlineCount} online, ${offlineCount} offline`,
+        });
+      } else {
+        toast.warning('Scanners offline', {
+          description: `All ${offlineCount} saved scanner(s) are currently offline`,
+        });
+      }
+    }
+
+    setIsVerifying(false);
+  };
 
   const handleRefreshScanners = async () => {
     setIsScanning(true);
@@ -111,6 +154,11 @@ export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps>
       
       setScanners(detectedScanners);
       
+      // Verify network scanners
+      if (detectedScanners.length > 0) {
+        await verifySavedScanners(detectedScanners);
+      }
+      
       if (detectedScanners.length === 0) {
         console.log('⚠️ No scanners detected');
         toast.info('No scanners detected', {
@@ -118,9 +166,6 @@ export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps>
         });
       } else {
         console.log(`✅ Found ${detectedScanners.length} scanner(s)`);
-        toast.success('Scanner discovery complete', {
-          description: `Found ${detectedScanners.length} scanner(s)`,
-        });
       }
     } catch (error) {
       console.error('Scanner detection failed:', error);
@@ -188,6 +233,86 @@ export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps>
     });
   };
 
+  const checkScannerHealth = async (scanner: ScannerDevice) => {
+    if (scanner.connectionType !== 'network' || !scanner.ipAddress) {
+      return;
+    }
+
+    try {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+      const response = await fetch(`${backendUrl}/api/scanner/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ipAddress: scanner.ipAddress }),
+        signal: AbortSignal.timeout(5000),
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          // Scanner is online
+          setScanners(prev => prev.map(s => 
+            s.id === scanner.id ? { ...s, status: 'online' as const } : s
+          ));
+        } else {
+          // Scanner not found
+          setScanners(prev => prev.map(s => 
+            s.id === scanner.id ? { ...s, status: 'offline' as const } : s
+          ));
+          toast.warning(`Scanner ${scanner.name} is offline`, {
+            description: data.error || 'Scanner is not responding'
+          });
+        }
+      }
+    } catch (e) {
+      // Connection failed
+      setScanners(prev => prev.map(s => 
+        s.id === scanner.id ? { ...s, status: 'offline' as const } : s
+      ));
+    }
+  };
+
+  const refreshScannerStatus = async () => {
+    if (scanners.length === 0) {
+      toast.info('No scanners to check');
+      return;
+    }
+    
+    setIsVerifying(true);
+    toast.info('Checking scanner status...');
+    
+    const verifiedScanners = await Promise.all(
+      scanners.map(async (scanner) => {
+        if (scanner.connectionType === 'network' && scanner.ipAddress) {
+          const isOnline = await scannerService.verifyScannerOnline(scanner);
+          return { ...scanner, status: isOnline ? 'online' as const : 'offline' as const };
+        }
+        return scanner;
+      })
+    );
+    
+    setScanners(verifiedScanners);
+    
+    // Deselect if selected scanner went offline
+    if (selectedScanner && verifiedScanners.find(s => s.id === selectedScanner.id)?.status === 'offline') {
+      onScannerSelect?.(null as any);
+      toast.warning('Selected scanner is offline', {
+        description: 'Please select an online scanner'
+      });
+    }
+    
+    const onlineCount = verifiedScanners.filter(s => s.status === 'online').length;
+    if (onlineCount === verifiedScanners.length) {
+      toast.success('All scanners online');
+    } else if (onlineCount > 0) {
+      toast.info(`${onlineCount} of ${verifiedScanners.length} scanners online`);
+    } else {
+      toast.warning('All scanners offline');
+    }
+    
+    setIsVerifying(false);
+  };
+
   const handleSettingChange = <K extends keyof ScanSettings>(key: K, value: ScanSettings[K]) => {
     const newSettings = { ...settings, [key]: value };
     setSettings(newSettings);
@@ -207,7 +332,7 @@ export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps>
       case 'online':
         return <Badge variant="default" className="bg-green-500/10 text-green-500 border-green-500/20"><CheckCircle2 className="h-3 w-3 mr-1" /> Online</Badge>;
       case 'offline':
-        return <Badge variant="secondary" className="bg-muted"><XCircle className="h-3 w-3 mr-1" /> Offline</Badge>;
+        return <Badge variant="destructive" className="bg-red-500/10 text-red-500 border-red-500/20"><XCircle className="h-3 w-3 mr-1" /> Offline</Badge>;
       case 'busy':
         return <Badge variant="default" className="bg-amber-500/10 text-amber-500 border-amber-500/20"><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Busy</Badge>;
       case 'error':
@@ -304,27 +429,61 @@ export const ScannerConfigurationPanel: React.FC<ScannerConfigurationPanelProps>
                     Scanners you've added will appear here
                   </CardDescription>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleRefreshScanners}
-                  disabled={isScanning}
-                >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${isScanning ? 'animate-spin' : ''}`} />
-                  Refresh
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={refreshScannerStatus}
+                    disabled={isScanning || isVerifying || scanners.length === 0}
+                    title="Check scanner status"
+                  >
+                    {isVerifying ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRefreshScanners}
+                    disabled={isScanning || isVerifying}
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-2 ${isScanning || isVerifying ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
+              {isVerifying && (
+                <div className="flex items-center gap-2 py-2 px-3 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                  <span className="text-sm text-blue-700 dark:text-blue-300">Verifying scanner status...</span>
+                </div>
+              )}
+              
               {scanners.map((scanner) => (
                 <div
                   key={scanner.id}
-                  className={`p-4 border rounded-lg cursor-pointer transition-all hover:border-primary/50 ${
+                  className={`p-4 border rounded-lg transition-all ${
+                    scanner.status === 'online' 
+                      ? 'cursor-pointer hover:border-primary/50' 
+                      : 'cursor-not-allowed'
+                  } ${
                     selectedScanner?.id === scanner.id 
                       ? 'border-primary bg-primary/5 ring-1 ring-primary/20' 
                       : 'border-border'
-                  } ${scanner.status !== 'online' ? 'opacity-60' : ''}`}
-                  onClick={() => scanner.status === 'online' && onScannerSelect?.(scanner)}
+                  } ${scanner.status !== 'online' ? 'opacity-60 bg-muted/30' : ''}`}
+                  onClick={() => {
+                    if (scanner.status === 'online') {
+                      onScannerSelect?.(scanner);
+                    } else {
+                      toast.error('Scanner is offline', {
+                        description: 'Turn on the scanner and click Refresh to reconnect'
+                      });
+                    }
+                  }}
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex items-start gap-3 flex-1">

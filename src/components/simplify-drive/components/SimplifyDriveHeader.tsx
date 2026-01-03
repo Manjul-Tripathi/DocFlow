@@ -219,12 +219,6 @@ export function SimplifyDriveHeader({
 
         {/* Upload Actions */}
         <div className="flex items-center gap-2 ml-auto">
-          {onChatbot && (
-            <Button variant="outline" onClick={onChatbot} className="gap-2">
-              <MessageSquare className="h-4 w-4" />
-              RAG Chat
-            </Button>
-          )}
           <Button variant="outline" onClick={onScan} className="gap-2">
             <Scan className="h-4 w-4" />
             Scan

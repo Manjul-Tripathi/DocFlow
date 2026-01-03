@@ -243,6 +243,10 @@ export const EnhancedDocumentUpload: React.FC<EnhancedDocumentUploadProps> = ({
         // Backend will handle document save with processing, embeddings, and classification
         try {
           updateFileStatus(uploadFile.id, { status: 'processing', progress: 55 });
+          
+          // Dispatch event to show processing banner
+          console.log('📤 Dispatching upload-started event (backend processing)');
+          window.dispatchEvent(new CustomEvent('upload-started', { detail: { count: 1 } }));
 
           // Convert file to base64
           const reader = new FileReader();
@@ -251,8 +255,8 @@ export const EnhancedDocumentUpload: React.FC<EnhancedDocumentUploadProps> = ({
             reader.readAsDataURL(uploadFile.file);
           });
 
-          // Call backend analysis endpoint - backend will save to database
-          const analysisResponse = await fetch(`${API_BASE_URL}/api/v1/analyze-document`, {
+          // Start backend analysis (don't await yet)
+          const analysisPromise = fetch(`${API_BASE_URL}/api/v1/analyze-document`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -267,6 +271,14 @@ export const EnhancedDocumentUpload: React.FC<EnhancedDocumentUploadProps> = ({
               yoloFaceEnabled: false
             }),
           });
+          
+          // Trigger documents-changed event immediately to show processing status
+          setTimeout(() => {
+            window.dispatchEvent(new Event('documents-changed'));
+          }, 500);
+          
+          // Now wait for the analysis to complete
+          const analysisResponse = await analysisPromise;
 
           if (analysisResponse.ok) {
             const analysisResult = await analysisResponse.json();
@@ -287,6 +299,10 @@ export const EnhancedDocumentUpload: React.FC<EnhancedDocumentUploadProps> = ({
         }
       } else {
         // Simple upload: Frontend saves directly without backend processing
+        // Dispatch event to show processing banner for simple uploads too
+        console.log('📤 Dispatching upload-started event (simple upload)');
+        window.dispatchEvent(new CustomEvent('upload-started', { detail: { count: 1 } }));
+        
         // Try to extract text locally for better auto-classification
         try {
           extractedText = await extractTextFromFile(uploadFile.file);
@@ -480,6 +496,10 @@ export const EnhancedDocumentUpload: React.FC<EnhancedDocumentUploadProps> = ({
         } : undefined
       });
 
+      // Dispatch upload-completed event to update processing banner and trigger document refresh
+      console.log('✅ Dispatching upload-completed event for document:', documentData.id);
+      window.dispatchEvent(new CustomEvent('upload-completed', { detail: { count: 1, documentId: documentData.id } }));
+      
       return documentData.id;
 
     } catch (error) {
@@ -489,6 +509,9 @@ export const EnhancedDocumentUpload: React.FC<EnhancedDocumentUploadProps> = ({
         progress: 0,
         error: errorMessage
       });
+      // Also dispatch completed on error so counter decrements
+      console.log('❌ Dispatching upload-completed event (error)');
+      window.dispatchEvent(new CustomEvent('upload-completed', { detail: { count: 1, error: true } }));
       return null;
     }
   };
